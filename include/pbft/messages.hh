@@ -2,6 +2,7 @@
 #include "salticidae/msg.h"
 #include "salticidae/crypto.h"
 
+#include "pbft/digest.hh"
 #include <string>
 #include <cstdint>
 
@@ -33,7 +34,13 @@ struct RequestMsg {
   RequestMsg(const std::string &op, uint64_t ts, uint32_t cid)
   : operation(op), timestamp(ts), client_id(cid) {}
   RequestMsg(DataStream &&s) {
-    s /*>> operation */>> timestamp >> client_id;
+    s /*>> operation */>> timestamp >> client_id; // TODO: Find out how to unserialize a string
+  }
+
+  std::string digest() const {
+    DataStream ds;
+    ds << opcode << operation << timestamp << client_id;
+    return compute_digest(ds.data(), ds.size());
   }
 };
 
@@ -54,7 +61,7 @@ struct ReplyMsg {
     serialized << view << timestamp << client_id << replica_id << result;
   }
   ReplyMsg(DataStream &&s) {
-    s >> view >> timestamp >> client_id >> replica_id /*>> result*/; // TODO: Find out how to unserialize a string
+    s >> view >> timestamp >> client_id >> replica_id /*>> result*/; 
   }
 };
 
@@ -87,25 +94,25 @@ struct PrePrepareMsg {
 };
 
 // Prepare (replica -> all)
-// <PREPARE, view, sequence_number, digest, replica_id>
+// <PREPARE, view, sequence_number, req_digest, replica_id>
 struct PrepareMsg {
   static const uint8_t opcode = PREPARE;
   DataStream serialized;
 
   uint32_t view;
   uint64_t seq_num;
-  std::string digest;
+  std::string req_digest;
   uint32_t replica_id;
 
   PrepareMsg(uint32_t v, uint64_t n, const std::string &d, uint32_t rid)
-  : view(v), seq_num(n), digest(d), replica_id(rid) {
-    serialized << view << seq_num << digest << replica_id;
+  : view(v), seq_num(n), req_digest(d), replica_id(rid) {
+    serialized << view << seq_num << req_digest << replica_id;
   }
-  PrepareMsg(DataStream &&s) { s >> view >> seq_num /*>> digest*/ >> replica_id; }
+  PrepareMsg(DataStream &&s) { s >> view >> seq_num /*>> req_digest*/ >> replica_id; }
 };
 
 // Commit (replica -> all)
-// <COMMIT, view, sequence_number, rquest_digest, replica_id>
+// <COMMIT, view, sequence_number, request_digest, replica_id>
 struct CommitMsg {
   static const uint8_t opcode = COMMIT;
   DataStream serialized;

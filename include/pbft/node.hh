@@ -14,13 +14,18 @@
 
 namespace pbft {
 
+struct CheckpointInfo {
+    // digest -> set of replica ids that sent this digest at this seq
+    std::unordered_map<std::string, std::unordered_set<uint32_t>> digests;
+    bool stable = false;
+};
+
 class Node {
 public:
   Node(uint32_t replica_id, uint32_t num_replicas,
        std::unique_ptr<ServiceInterface> service);
 
   void add_replica(uint32_t id, const salticidae::NetAddr &addr);
-  void remove_replica(uint32_t id);
   void start(const salticidae::NetAddr &listen_addr);
   void run();
 
@@ -34,9 +39,12 @@ private:
   uint32_t view_{0};
   uint64_t next_seq_{1};
   uint64_t last_exec_{0};
+  uint64_t window_size_{200};
   uint64_t low_{0};
-  uint64_t high_{200};
+  uint64_t high_{low_ + window_size_};
   const uint64_t checkpoint_interval_{100};
+  uint64_t last_stable_checkpoint_seq_{0};
+  std::string last_stable_checkpoint_digest_;
 
   // Service
   std::unique_ptr<ServiceInterface> service_;
@@ -93,7 +101,12 @@ private:
                   const salticidae::MsgNetwork<uint8_t>::conn_t &);
 
   void try_execute();
-  void take_checkpoint();
+
+  // For collecting checkpoint messages
+  std::map<uint64_t, CheckpointInfo> checkpoints_;
+  void make_checkpoint();
+  void advance_watermarks(uint64_t stable_seq);
+  void garbage_collect(uint64_t stable_seq);
 
   // IO
   template <typename M> void broadcast(const M &m);

@@ -22,6 +22,7 @@ public:
   // Gauges
   void set_view(uint32_t view);
   void set_inflight(uint64_t n);
+  void set_watermarks(uint64_t low, uint64_t high);
 
   // Histograms
   void observe_phase(const std::string &phase, double seconds);
@@ -40,6 +41,8 @@ private:
   std::unordered_map<std::string, prometheus::Counter*> vc_;
   prometheus::Gauge *view_;
   prometheus::Gauge *inflight_;
+  prometheus::Gauge *low_watermark_;
+  prometheus::Gauge *high_watermark_;
   std::unordered_map<std::string, prometheus::Histogram*> phase_;
 };
 

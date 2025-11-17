@@ -49,6 +49,8 @@ Metrics::Metrics(const std::string &bind_addr) {
 
   view_ = &gauge_family_->Add({{"name", "current_view"}});
   inflight_ = &gauge_family_->Add({{"name", "inflight_requests"}});
+  low_watermark_ = &gauge_family_->Add({{"name", "low_watermark"}});
+  high_watermark_ = &gauge_family_->Add({{"name", "high_watermark"}});
 
   phase_["preprepare"] =
       &phase_family_->Add({{"phase", "preprepare"}}, default_buckets());
@@ -79,6 +81,11 @@ void Metrics::observe_phase(const std::string &phase, double seconds) {
   auto it = phase_.find(phase);
   if (it != phase_.end())
     it->second->Observe(seconds);
+}
+
+void Metrics::set_watermarks(uint64_t low, uint64_t high) { 
+  low_watermark_->Set(low);
+  high_watermark_->Set(high);
 }
 
 } // namespace pbft
