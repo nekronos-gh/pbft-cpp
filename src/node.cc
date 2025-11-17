@@ -201,7 +201,7 @@ void Node::on_commit(CommitMsg &&m, const MsgNetwork<uint8_t>::conn_t &) {
 
 void Node::on_checkpoint(CheckpointMsg &&m,
                          const MsgNetwork<uint8_t>::conn_t &) {
-  // Discard 
+  // Discard if not in current window
   if (m.seq_num < low_ || m.seq_num > high_)
     return;
 
@@ -218,7 +218,8 @@ void Node::on_checkpoint(CheckpointMsg &&m,
   if (cp_info.stable)
     return;
 
-  // Check if we reached 2f + 1 matching digests
+  // Check if we reached 2f + 1 matching digests and sequence number
+  // This is the proof of correctness
   if (rep_set.size() >= 2 * f_ + 1) {
     cp_info.stable = true;
 
@@ -248,14 +249,19 @@ void Node::try_execute() {
     metrics_->inc_msg("reply");
 
     last_exec_++;
-    if (last_exec_ % checkpoint_interval_ == 0)
+    if (last_exec_ % checkpoint_interval_ == 0) {
       make_checkpoint();
+    }
   }
 }
 
 void Node::make_checkpoint() {
   auto digest = service_->get_checkpoint_digest();
   last_stable_checkpoint_digest_ = digest;
+  // Include its own checkpoint
+  auto &cp_info = checkpoints_[last_exec_];
+  auto &rep_set = cp_info.digests[digest];
+  rep_set.insert(id_);
   CheckpointMsg cp(last_exec_, digest, id_);
   broadcast(cp);
 }
@@ -268,7 +274,7 @@ void Node::advance_watermarks(uint64_t stable_seq) {
 
 void Node::garbage_collect(uint64_t stable_seq) {
   // Drop all pre-prepare/prepare/commit log entries <= stable_seq
-  for (auto it = reqlog_.begin(); it != reqlog_.end(); ) {
+  for (auto it = reqlog_.begin(); it != reqlog_.end();) {
     if (it->first <= stable_seq)
       it = reqlog_.erase(it);
     else
@@ -276,14 +282,13 @@ void Node::garbage_collect(uint64_t stable_seq) {
   }
 
   // Drop all checkpoint tracking strictly older than the stable one
-  for (auto it = checkpoints_.begin(); it != checkpoints_.end(); ) {
+  for (auto it = checkpoints_.begin(); it != checkpoints_.end();) {
     if (it->first < stable_seq)
       it = checkpoints_.erase(it);
     else
       ++it;
   }
 }
-
 
 void Node::on_viewchange(ViewChangeMsg &&,
                          const MsgNetwork<uint8_t>::conn_t &) {
