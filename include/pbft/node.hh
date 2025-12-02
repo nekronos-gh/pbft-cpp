@@ -1,4 +1,7 @@
 #pragma once
+#ifndef PBFT_TESTING_ACCESS
+    #define PBFT_TESTING_ACCESS private
+#endif
 #include "pbft/messages.hh"
 #include "pbft/metrics.hh"
 #include "pbft/service_interface.hh"
@@ -24,11 +27,17 @@ public:
   void start(const salticidae::NetAddr &listen_addr);
   void run();
 
-private:
+PBFT_TESTING_ACCESS:
   // Config
   uint32_t id_;
   uint32_t n_{0};
   uint32_t f_{0};
+
+  // Network
+  salticidae::EventContext ec_;
+  std::unique_ptr<salticidae::MsgNetwork<uint8_t>> net_;
+  std::unordered_map<uint32_t, salticidae::NetAddr> peers_;
+  std::unordered_map<uint32_t, salticidae::NetAddr> clients_;
 
   // State (Sane defaults)
   uint32_t view_{0};
@@ -61,7 +70,8 @@ private:
     uint32_t replica_id;
     std::string result;
   };
-  std::map<uint32_t, ClientReplyInfo> last_replies_; // client_id -> last reply
+  // client_id -> last reply
+  std::map<uint32_t, ClientReplyInfo> last_replies_; 
 
   // Protocol Handlers
   void register_handlers();
@@ -108,12 +118,6 @@ private:
   void make_checkpoint();
   void advance_watermarks(uint64_t stable_seq);
   void garbage_collect();
-
-  // Network
-  salticidae::EventContext ec_;
-  std::unique_ptr<salticidae::MsgNetwork<uint8_t>> net_;
-  std::unordered_map<uint32_t, salticidae::NetAddr> peers_;
-  std::unordered_map<uint32_t, salticidae::NetAddr> clients_;
 
   // Helpers
   bool is_primary() const { return id_ == (view_ % n_); }

@@ -25,7 +25,7 @@ namespace pbft {
   // Client request (client -> any)
   // <REQUEST, operation, timestamp, client>
   struct RequestMsg {
-    static const uint8_t opcode = REQUEST;
+    static constexpr uint8_t opcode = REQUEST;
     DataStream serialized;
 
     std::string operation;
@@ -53,7 +53,7 @@ namespace pbft {
   // Reply (replica -> client)
   // <REPLY, view, timestamp, client_id, replica_id, result>
   struct ReplyMsg {
-    static const uint8_t opcode = REPLY;
+    static constexpr uint8_t opcode = REPLY;
     DataStream serialized;
 
     uint32_t view;
@@ -75,7 +75,7 @@ namespace pbft {
   // Pre-prepare (primary -> replicas).
   // <<PRE-PREPARE, view, sequence_number, request_digest> REQUEST>
   struct PrePrepareMsg {
-    static const uint8_t opcode = PRE_PREPARE;
+    static constexpr uint8_t opcode = PRE_PREPARE;
     DataStream serialized;
 
     uint32_t view;
@@ -105,7 +105,7 @@ namespace pbft {
   // Prepare (replica -> all)
   // <PREPARE, view, sequence_number, req_digest, replica_id>
   struct PrepareMsg {
-    static const uint8_t opcode = PREPARE;
+    static constexpr uint8_t opcode = PREPARE;
     DataStream serialized;
 
     uint32_t view;
@@ -130,7 +130,7 @@ namespace pbft {
   // Commit (replica -> all)
   // <COMMIT, view, sequence_number, request_digest, replica_id>
   struct CommitMsg {
-    static const uint8_t opcode = COMMIT;
+    static constexpr uint8_t opcode = COMMIT;
     DataStream serialized;
 
     uint32_t view;
@@ -148,7 +148,7 @@ namespace pbft {
   // Checkpoint (replica -> all)
   // <CHECKPOINT, sequence_number, state_digest, replica_id>
   struct CheckpointMsg {
-    static const uint8_t opcode = CHECKPOINT;
+    static constexpr uint8_t opcode = CHECKPOINT;
     DataStream serialized;
 
     uint64_t seq_num;
@@ -203,7 +203,7 @@ namespace pbft {
   // <VIEW-CHANGE, next_view, sequence_number_last_stable_checkpoint, 
   //    set_valid_checkpoints, set_of_requests, replica_id>
   struct ViewChangeMsg {
-    static const uint8_t opcode = VIEW_CHANGE;
+    static constexpr uint8_t opcode = VIEW_CHANGE;
     DataStream serialized;
 
     uint64_t next_view;
@@ -237,7 +237,7 @@ namespace pbft {
   // <NEW-VIEW, next_view, set_valid_view_change_messages,
   //  set_pre_prepare_messages>
   struct NewViewMsg {
-    static const uint8_t opcode = NEW_VIEW;
+    static constexpr uint8_t opcode = NEW_VIEW;
     DataStream serialized;
 
     uint64_t next_view;

@@ -7,10 +7,8 @@
 #include "salticidae/stream.h"
 #include "salticidae/conn.h"
 
-using salticidae::DataStream;
 using salticidae::MsgNetwork;
 using salticidae::NetAddr;
-using salticidae::ConnPool;
 using salticidae::_1;
 using salticidae::_2;
 
@@ -24,7 +22,9 @@ Node::Node(uint32_t replica_id, uint32_t num_replicas,
 
   f_ = (n_ - 1) / 3;
   service_->initialize();
-  metrics_ = std::make_unique<Metrics>("0.0.0.0:9460"); // TODO: Make configurable
+  std::string metrics_addr = "0.0.0.0:" + std::to_string(9460 + id_); // TODO: Make configurable
+  metrics_ = std::make_unique<Metrics>(metrics_addr); 
+
   metrics_->set_view(view_);
   register_handlers();
 }
@@ -71,7 +71,7 @@ void Node::on_request(RequestMsg &&m,
       if (last_reply_it->second.timestamp == m.timestamp) {
         // Resend last reply
         send_to_client(m.client_id, ReplyMsg(view_, m.timestamp, m.client_id, id_, 
-                                      last_reply_it->second.result));
+                                             last_reply_it->second.result));
         return;
       }
     }
@@ -223,7 +223,7 @@ void Node::try_execute() {
     send_to_client(
       req_entry.req.client_id,
       ReplyMsg(view_, req_entry.req.timestamp, 
-                req_entry.req.client_id, id_, result));
+               req_entry.req.client_id, id_, result));
     metrics_->inc_msg("reply");
 
     last_exec_++;
@@ -435,7 +435,7 @@ void Node::broadcast(const M &m) {
 
 template <typename M> 
 void Node::send_to_replica(uint32_t replica_id, const M& m) {
-  auto it = peers_.find(primary());
+  auto it = peers_.find(replica_id);
   if (it == peers_.end())
     return;
   net_->send_msg(m, net_->connect_sync(it->second));
@@ -443,8 +443,8 @@ void Node::send_to_replica(uint32_t replica_id, const M& m) {
 
 template <typename M> 
 void Node::send_to_client(uint32_t client_id, const M& m) {
-  auto it = clients_.find(primary());
-if (it == clients_.end())
+  auto it = clients_.find(client_id);
+  if (it == clients_.end())
     return;
   net_->send_msg(m, net_->connect_sync(it->second));
 }

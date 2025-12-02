@@ -22,7 +22,6 @@ public:
 
   // Checkpointing.
   virtual std::vector<uint8_t> get_checkpoint() = 0;
-  virtual void set_checkpoint(const std::vector<uint8_t> &checkpoint) = 0;
   virtual uint256_t get_checkpoint_digest() = 0;
 };
 } 

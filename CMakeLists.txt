@@ -12,29 +12,35 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(GNUInstallDirs)
 find_package(prometheus-cpp CONFIG REQUIRED)
 find_package(Salticidae REQUIRED)
+find_package(OpenSSL REQUIRED)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(LIBUV REQUIRED libuv)
 
 # Select sources
 add_library(pbft_core STATIC
   src/node.cc
   src/metrics.cc
 )
+add_library(pbft::core ALIAS pbft_core)
 
 # Public headers
 target_include_directories(pbft_core
   PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>
-  PRIVATE
     ${SALTICIDAE_INCLUDE_DIRS}
 )
 
 # Link dependencies
 target_link_libraries(pbft_core
-  PRIVATE
-    ${SALTICIDAE_LIBRARIES}
   PUBLIC
     prometheus-cpp::core # For downstream use
     prometheus-cpp::pull
+  PRIVATE
+    OpenSSL::SSL
+    OpenSSL::Crypto
+    ${SALTICIDAE_LIBRARIES}
+    ${LIBUV_LIBRARIES}
 )
 
 # Install and export
@@ -53,3 +59,6 @@ install(EXPORT pbftTargets
   NAMESPACE pbft::
   DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/pbft
 )
+
+# Include subdirectory with tests
+add_subdirectory(test)
