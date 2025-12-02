@@ -20,6 +20,7 @@ public:
        std::unique_ptr<ServiceInterface> service);
 
   void add_replica(uint32_t id, const salticidae::NetAddr &addr);
+  void add_client(uint32_t id, const salticidae::NetAddr &addr);
   void start(const salticidae::NetAddr &listen_addr);
   void run();
 
@@ -36,7 +37,7 @@ private:
   static const uint32_t L = 200; // Log window size
   static const uint32_t K = 100; // Checkpoint interval
   uint64_t h_{0};
-  uint64_t H_{h_ + L};
+  uint64_t H_{L};
 
   // Logs
   enum class ReqStage { NONE, PRE_PREPARED, PREPARED, COMMITTED };
@@ -53,6 +54,14 @@ private:
     std::set<uint32_t> commits;
   };
   std::unordered_map<uint64_t, ReqLogEntry> reqlog_;
+
+  // Client management
+  struct ClientReplyInfo {
+    uint64_t timestamp;
+    uint32_t replica_id;
+    std::string result;
+  };
+  std::map<uint32_t, ClientReplyInfo> last_replies_; // client_id -> last reply
 
   // Protocol Handlers
   void register_handlers();
@@ -83,7 +92,9 @@ private:
   constexpr static const double vc_timeout_{2.0};
   salticidae::TimerEvent view_change_timer_;
   bool view_changing_{false};
+  // (new view) -> (replica_id -> View Change message)
   std::map<uint32_t, std::map<uint32_t, ViewChangeMsg>> view_change_store_;
+  uint32_t view_change_timeout_count_{0}; // For exponential backoff
 
   // Checkpointing
   struct CheckpointVotes {
@@ -93,6 +104,7 @@ private:
   };
   std::map<uint64_t, CheckpointVotes> checkpoints_;
   uint256_t last_stable_digest_;
+
   void make_checkpoint();
   void advance_watermarks(uint64_t stable_seq);
   void garbage_collect();
@@ -107,7 +119,8 @@ private:
   bool is_primary() const { return id_ == (view_ % n_); }
   uint32_t primary() const { return view_ % n_; }
   template <typename M> void broadcast(const M &m);
-  template <typename M> void send_to(uint32_t replica_id, const M& msg);
+  template <typename M> void send_to_replica(uint32_t replica_id, const M& msg);
+  template <typename M> void send_to_client(uint32_t client_id, const M& msg);
 
   // Service
   std::unique_ptr<ServiceInterface> service_;
