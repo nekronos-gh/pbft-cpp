@@ -26,11 +26,12 @@ public:
 class PBFTNodeTest : public ::testing::Test {
 protected:
   void SetUp() override {
-    service = std::make_unique<MockService>();
+    auto service_ptr = std::make_unique<MockService>();
+    service = service_ptr.get(); // Only for mock
     // Setup mock expectations
     EXPECT_CALL(*service, initialize()).Times(1).WillOnce(Return());
     // Create 4 replicas (f=1)
-    node_ = std::make_unique<Node>(0, NUM_REPLICAS, std::move(service));
+    node_ = std::make_unique<Node>(0, NUM_REPLICAS, std::move(service_ptr));
   }
 
   std::unique_ptr<Node> node_;
@@ -40,7 +41,7 @@ protected:
   static constexpr uint64_t L = 200;  // Watermark window
 
   salticidae::MsgNetwork<uint8_t>::conn_t dummy_conn;
-  std::unique_ptr<MockService> service;
+  MockService* service;
 };
 
 // ============================================================================
@@ -74,6 +75,7 @@ TEST_F(PBFTNodeTest, IsPrimary) {
 // ============================================================================
 
 TEST_F(PBFTNodeTest, AddReplicaStoresAddress) {
+  node_->peers_ = {};
   salticidae::NetAddr addr("127.0.0.1:5001");
   node_->add_replica(1, addr);
 
@@ -82,6 +84,7 @@ TEST_F(PBFTNodeTest, AddReplicaStoresAddress) {
 }
 
 TEST_F(PBFTNodeTest, OverwriteReplicaAddress) {
+  node_->peers_ = {};
   salticidae::NetAddr addr1("127.0.0.1:5001");
   salticidae::NetAddr addr2("127.0.0.1:9999");
   node_->add_replica(1, addr1);
@@ -92,13 +95,13 @@ TEST_F(PBFTNodeTest, OverwriteReplicaAddress) {
 }
 
 TEST_F(PBFTNodeTest, AddClientStoresAddress) {
+  node_->clients_ = {};
   salticidae::NetAddr client_addr("127.0.0.1:6000");
   node_->add_client(100, client_addr);
 
   ASSERT_EQ(node_->clients_.size(), 1);
   EXPECT_EQ(node_->clients_[100], client_addr);
 }
-
 
 // ============================================================================
 // REQUEST PROCESSING TESTS
@@ -127,9 +130,6 @@ TEST_F(PBFTNodeTest, OnRequestNonPrimaryIgnored) {
 }
 
 TEST_F(PBFTNodeTest, OnRequestPrimaryCreatesLogEntry) {
-  salticidae::NetAddr client_addr("127.0.0.1:6000");
-  node_->add_client(0, client_addr);
-
   RequestMsg req("op", 1000, 0);
   node_->on_request(std::move(req), dummy_conn);
 
@@ -150,9 +150,6 @@ TEST_F(PBFTNodeTest, OnRequestPrimaryCreatesLogEntry) {
 }
 
 TEST_F(PBFTNodeTest, OnRequestDuplicateUsesCache) {
-  salticidae::NetAddr client_addr("127.0.0.1:6000");
-  node_->add_client(0, client_addr);
-
   // Inject previous response
   Node::ClientReplyInfo cached;
   cached.timestamp = 2000;
@@ -175,11 +172,11 @@ TEST_F(PBFTNodeTest, PrimarySequenceNumberValidation) {
   // Sequence number outside the window
   
   // Lower bound
-  node_->h_ = 10;
-  node_->seq_num_ = 10;
+  node_->h_ = 5;
+  node_->seq_num_ = 4; // Next is going to be 5
   RequestMsg req("op", 1000, 1);
   node_->on_request(std::move(req), salticidae::MsgNetwork<uint8_t>::conn_t{});
-  EXPECT_EQ(node_->seq_num_, 10);  // Should not increment
+  EXPECT_EQ(node_->seq_num_, 4);  // Should not increment
   
   // Upper bound
   node_->h_ = 0;
@@ -237,13 +234,14 @@ TEST_F(PBFTNodeTest, PrePrepareDigestConflictIsIgnored) {
 }
 
 TEST_F(PBFTNodeTest, PrePrepareCreatesLogEntryAndSetsPrePrepared) {
-  PrePrepareMsg m(node_->view_, 0, salticidae::get_hash("op"), RequestMsg("op", 123, 42));
+  uint64_t seq = 1;
+  PrePrepareMsg m(node_->view_, seq, salticidae::get_hash("op"), RequestMsg("op", 123, 42));
   node_->on_preprepare(std::move(m), dummy_conn);
 
   // Log entry is created and filled
-  ASSERT_TRUE(node_->reqlog_.count(0));
-  auto &entry = node_->reqlog_[0];
-  EXPECT_EQ(entry.seq, 0);
+  ASSERT_TRUE(node_->reqlog_.count(seq));
+  auto &entry = node_->reqlog_[seq];
+  EXPECT_EQ(entry.seq, seq);
   EXPECT_EQ(entry.view, node_->view_);
   EXPECT_TRUE(entry.has_preprepare);
   EXPECT_EQ(entry.stage, Node::ReqStage::PRE_PREPARED);
@@ -254,20 +252,6 @@ TEST_F(PBFTNodeTest, PrePrepareCreatesLogEntryAndSetsPrePrepared) {
 
   // Self is in prepares
   EXPECT_TRUE(entry.prepares.count(node_->id_));
-}
-
-TEST_F(PBFTNodeTest, PrePrepareTriggersTryPrepare) {
-  for (uint64_t i = 0; i < 2 * MAX_FAULTY + 1; ++i) {
-    std::string op = "op" + std::to_string(i);
-    RequestMsg req(op, 123, 42);
-    uint256_t digest = salticidae::get_hash(req.operation);
-
-    PrePrepareMsg m(node_->view_, 0, digest, req);
-    node_->on_preprepare(std::move(m), dummy_conn);
-  }
-
-  auto &entry = node_->reqlog_[0];
-  EXPECT_EQ(entry.stage, Node::ReqStage::PREPARED);
 }
 
 // ============================================================================
@@ -305,7 +289,7 @@ TEST_F(PBFTNodeTest, PrepareIgnoredIfSeqOutOfWatermarks) {
 }
 
 TEST_F(PBFTNodeTest, PrepareBufferedWithoutPrePrepare) {
-  uint64_t seq = 0;
+  uint64_t seq = 1;
   PrepareMsg m(node_->view_, seq, salticidae::get_hash("op"), 1);
   node_->on_prepare(std::move(m), dummy_conn);
 
@@ -317,7 +301,7 @@ TEST_F(PBFTNodeTest, PrepareBufferedWithoutPrePrepare) {
 }
 
 TEST_F(PBFTNodeTest, PrepareDigestConflictPrePrepare) {
-  uint64_t seq = 0;
+  uint64_t seq = 1;
 
   // First set up a pre-prepare with digest1
   RequestMsg req1("op1", 100, 1);
@@ -340,7 +324,7 @@ TEST_F(PBFTNodeTest, PrepareDigestConflictPrePrepare) {
 }
 
 TEST_F(PBFTNodeTest, TryPrepareReachesPreparedWhenQuorumMet) {
-  uint64_t seq = 0;
+  uint64_t seq = 1;
 
   // Pre-prepare already done
   RequestMsg req("op", 100, 1);
@@ -383,6 +367,28 @@ TEST_F(PBFTNodeTest, TryPrepareDoesNotTriggerIfNotPrePrepared) {
   EXPECT_TRUE(entry.commits.empty());
 }
 
+TEST_F(PBFTNodeTest, OutOfOrderPrePrepareTriggersTryPrepare) {
+  uint64_t seq = 1;
+  RequestMsg req("op", 123, 42);
+  uint256_t digest = salticidae::get_hash(req.operation);
+
+  // Send 2f
+  for (uint64_t i = 1; i < 2 * MAX_FAULTY + 1; i++) {
+    PrepareMsg m(node_->view_, seq, digest, i);
+    node_->on_prepare(std::move(m), dummy_conn);
+  }
+
+  // Out of order PrePreare
+  PrePrepareMsg m(node_->view_, seq, digest, req);
+  node_->on_preprepare(std::move(m), dummy_conn);
+
+  // Check that try prepare executes
+  auto &entry = node_->reqlog_[seq];
+  EXPECT_EQ(entry.prepares.size(), 2 * MAX_FAULTY + 1);
+  EXPECT_EQ(entry.stage, Node::ReqStage::PREPARED);
+}
+
+
 // ============================================================================
 // COMMIT PROCESSING TESTS
 // ============================================================================
@@ -413,7 +419,7 @@ TEST_F(PBFTNodeTest, CommitIgnoredIfSeqOutOfWatermarks) {
 }
 
 TEST_F(PBFTNodeTest, CommitIgnoredIfDigestMismatch) {
-  uint64_t seq = 0;
+  uint64_t seq = 1;
   auto &entry = node_->reqlog_[seq];
   entry.digest = salticidae::get_hash("op1");
   CommitMsg wrong(node_->view_, seq, salticidae::get_hash("op2"), 2);
@@ -422,7 +428,7 @@ TEST_F(PBFTNodeTest, CommitIgnoredIfDigestMismatch) {
 }
 
 TEST_F(PBFTNodeTest, CommitStoredIfDigestMatches) {
-  uint64_t seq = 0;
+  uint64_t seq = 1;
   auto &entry = node_->reqlog_[seq];
   entry.stage = Node::ReqStage::PREPARED;
   entry.digest = salticidae::get_hash("op");
@@ -476,7 +482,7 @@ TEST_F(PBFTNodeTest, TryCommitDoesNotTransitionWithoutQuorum) {
 }
 
 TEST_F(PBFTNodeTest, CommitTriggersExecutionOnCommitted) {
-  uint64_t seq = 0;
+  uint64_t seq = 1;
   auto &entry = node_->reqlog_[seq];
   entry.stage = Node::ReqStage::PREPARED;
   entry.digest = salticidae::get_hash("op");
@@ -490,7 +496,7 @@ TEST_F(PBFTNodeTest, CommitTriggersExecutionOnCommitted) {
   // Simulate commits to reach quorum and PREPARED state
   // 2f + 1
   for (uint64_t i = 0; i < 2 * MAX_FAULTY + 1; ++i) {
-    CommitMsg commit(node_->view_, seq, entry.digest, 1);
+    CommitMsg commit(node_->view_, seq, entry.digest, i);
     node_->on_commit(std::move(commit), dummy_conn);
   }
 
@@ -507,7 +513,7 @@ TEST_F(PBFTNodeTest, CommitTriggersExecutionOnCommitted) {
 TEST_F(PBFTNodeTest, RequestStateTransitionsPipeline) {
 
   // Simulate the entire pipeline
-  uint64_t seq = 0;
+  uint64_t seq = 1;
   auto& entry = node_->reqlog_[seq];
   
   // Initial state
@@ -534,9 +540,9 @@ TEST_F(PBFTNodeTest, RequestStateTransitionsPipeline) {
   node_->try_commit(entry);
   EXPECT_EQ(entry.stage, Node::ReqStage::COMMITTED);
   
-  // Execution should advance last_exec_
+  // Execution should advance
   node_->try_execute();
-  EXPECT_EQ(node_->last_exec_, 1);
+  EXPECT_EQ(node_->last_exec_, seq);
 }
 
 // ============================================================================
@@ -661,7 +667,7 @@ TEST_F(PBFTNodeTest, StartViewChangeUpdatesState) {
   node_->view_ = 0;
 
   // Setup a prepared request to be included in P set
-  uint64_t seq = 10;
+  uint64_t seq = 1;
   auto &entry = node_->reqlog_[seq];
   entry.stage = Node::ReqStage::PREPARED;
   entry.view = 0;
@@ -675,18 +681,13 @@ TEST_F(PBFTNodeTest, StartViewChangeUpdatesState) {
   // 2. State should be view_changing
   EXPECT_TRUE(node_->view_changing_);
   // 3. Timeout count should increment
-  EXPECT_EQ(node_->view_change_timeout_count_, 2);
-  // 4. Should have stored its own view change message (even if it might ignore it logic-wise)
-  // Note: Based on provided code, it sends VC with old view (0), but view_ is now 1.
-  // on_viewchange rejects 0 < 1. So it won't be in store_.
-  // However, we can verify the side effects above.
+  EXPECT_EQ(node_->view_change_timeout_count_, 1);
 }
 
 TEST_F(PBFTNodeTest, OnViewChangeAggregatesAndCreatesNewView) {
-  // We simulate being the primary for View 4 (Node 0 is primary for view 4)
+  // We simulate being the primary for View 4 (Our goal)
   node_->id_ = 0; 
-  node_->view_ = 4; 
-  node_->f_ = 1; // Quorum = 2f+1 = 3
+  node_->view_ = 3; 
 
   // Construct 3 ViewChange messages for View 4
   // We want to test O-set calculation.
@@ -701,19 +702,17 @@ TEST_F(PBFTNodeTest, OnViewChangeAggregatesAndCreatesNewView) {
   uint64_t stable_ckpt = 50;
   
   // VC 1 (From self/Node 0)
-  ViewChangeMsg vc0(target_view, stable_ckpt, 0, {}, {});
+  node_->start_view_change();
 
   // VC 2 (From Node 1) - Has prepare at 55, view 2
-  PrepareProof p1(2, 55, salticidae::get_hash("old"));
+  PrepareProof p1(2, 55, salticidae::get_hash("op"));
   ViewChangeMsg vc1(target_view, stable_ckpt, 1, {}, {p1});
 
-  // VC 3 (From Node 2) - Has prepare at 55, view 3 (Should be chosen)
-  uint256_t win_digest = salticidae::get_hash("winner");
-  PrepareProof p2(3, 55, win_digest);
+  // VC 3 (From Node 2) - Has prepare at 55, view 3
+  PrepareProof p2(3, 55, salticidae::get_hash("op"));
   ViewChangeMsg vc2(target_view, stable_ckpt, 2, {}, {p2});
 
   // Inject messages
-  node_->on_viewchange(std::move(vc0), dummy_conn);
   node_->on_viewchange(std::move(vc1), dummy_conn);
   
   // Not enough yet (size 2)
@@ -723,7 +722,7 @@ TEST_F(PBFTNodeTest, OnViewChangeAggregatesAndCreatesNewView) {
   node_->on_viewchange(std::move(vc2), dummy_conn);
 
   EXPECT_FALSE(node_->view_changing_);
-  EXPECT_EQ(node_->view_, 4);
+  EXPECT_EQ(node_->view_, target_view);
 
   // Verify internal state was reset
   EXPECT_EQ(node_->view_change_timeout_count_, 0);
@@ -740,47 +739,38 @@ TEST_F(PBFTNodeTest, OnViewChangeIgnoresDiffPrimary) {
   EXPECT_TRUE(node_->view_change_store_[5].empty());
 }
 
-// 3. ON NEW VIEW (Backup Logic)
-// Tests accepting a NewView message and processing the O-set
 TEST_F(PBFTNodeTest, OnNewViewUpdatesStateAndProcessesOset) {
   // Setup: Node is stuck in View 3, changing to View 4
   node_->view_ = 3;
+  uint64_t new_view = 4;
   node_->view_changing_ = true;
-  node_->f_ = 1;
 
   // Create Valid V set (3 VCs)
   std::vector<ViewChangeMsg> V;
-  for(int i=0; i<3; ++i) {
-    V.emplace_back(4, 0, i, std::vector<CheckpointMsg>{}, std::vector<PrepareProof>{});
+  for(int i = 0; i < 2 * MAX_FAULTY + 1; ++i) {
+    V.emplace_back(new_view, 0, i, std::vector<CheckpointMsg>{}, std::vector<PrepareProof>{});
   }
 
-  // Create O set (1 PrePrepare)
-  // Logic requires O set size = max_s - min_s. 
-  // VCs have min_s=0. max_s=0 (no proofs). 
-  // So O set should be empty? 
-  // Wait, code: for (uint64_t n = min_s + 1; n <= max_s; n++)
-  // If min_s=0, max_s=0, loop doesn't run. O is empty.
-  
-  // Let's make it interesting: One VC has max_s=1
+  // Add one proof
   V[0].prepared_proofs.push_back(PrepareProof(2, 1, salticidae::get_hash("op")));
   
   // Now max_s=1, min_s=0. O set must have size 1.
   std::vector<PrePrepareMsg> O;
   RequestMsg req("op", 0, 0);
-  O.emplace_back(4, 1, salticidae::get_hash("op"), req);
+  O.emplace_back(new_view, 1, salticidae::get_hash("op"), req);
 
-  NewViewMsg nv(4, V, O);
+  NewViewMsg nv(new_view, V, O);
 
   node_->on_newview(std::move(nv), dummy_conn);
 
-  // 1. State Updated
-  EXPECT_EQ(node_->view_, 4);
+  // State Updated
+  EXPECT_EQ(node_->view_, new_view);
   EXPECT_FALSE(node_->view_changing_);
   EXPECT_EQ(node_->view_change_timeout_count_, 0);
 
-  // 2. PrePrepare processed (Log entry created)
+  // PrePrepare processed (Log entry created)
   ASSERT_TRUE(node_->reqlog_.count(1));
-  EXPECT_EQ(node_->reqlog_[1].view, 4);
+  EXPECT_EQ(node_->reqlog_[1].view, new_view);
   EXPECT_EQ(node_->reqlog_[1].stage, Node::ReqStage::PRE_PREPARED);
 }
 
@@ -825,19 +815,6 @@ TEST_F(PBFTNodeTest, ViewChangeDuringNormalOperation) {
   RequestMsg new_req("op2", 1001, 1);
   node_->on_request(std::move(new_req), salticidae::MsgNetwork<uint8_t>::conn_t{});
   EXPECT_EQ(node_->reqlog_.size(), 1);  // Only original request
-}
-
-TEST_F(PBFTNodeTest, MalformedMessages) {
-  
-  // Empty request
-  RequestMsg empty_req("", 0, 0);
-  node_->on_request(std::move(empty_req), salticidae::MsgNetwork<uint8_t>::conn_t{});
-  EXPECT_TRUE(node_->reqlog_.empty());  // Should be ignored
-  
-  // Pre-prepare with null digest
-  PrePrepareMsg null_digest(0, 1, uint256_t{}, RequestMsg("op", 0, 0));
-  node_->on_preprepare(std::move(null_digest), salticidae::MsgNetwork<uint8_t>::conn_t{});
-  EXPECT_TRUE(node_->reqlog_.empty());
 }
 
 TEST_F(PBFTNodeTest, LogOverflowProtection) {

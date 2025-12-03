@@ -61,6 +61,7 @@ void Node::register_handlers() {
 void Node::on_request(RequestMsg &&m, 
                       const MsgNetwork<uint8_t>::conn_t &) {
   metrics_->inc_msg("request");
+    
   // Requests are only processed by primary
   if (is_primary()) {
     if (view_changing_) return;
@@ -77,8 +78,8 @@ void Node::on_request(RequestMsg &&m,
     }
 
     // Verify sequence within watermarks
+    if (seq_num_ < h_ || seq_num_ >= H_) return;
     seq_num_++;
-    if (seq_num_ <= h_ || seq_num_ > H_) return;
 
     auto &request = reqlog_[seq_num_]; // Create log entry
     // Begin PRE_PREPARE phase
@@ -112,7 +113,7 @@ void Node::on_preprepare(PrePrepareMsg &&m,
   // Discard message criteria
   if (view_changing_) return;
   if (m.view != view_) return;
-  if (m.seq_num <= h_ || m.seq_num > H_) return;
+  if (m.seq_num < h_ || m.seq_num > H_) return;
 
   auto &req_entry = reqlog_[m.seq_num];
 
@@ -148,7 +149,7 @@ void Node::on_prepare(PrepareMsg &&m,
   // Discard message criteria
   if (view_changing_) return;
   if (m.view != view_) return;
-  if (m.seq_num <= h_ || m.seq_num > H_) return;
+  if (m.seq_num < h_ || m.seq_num > H_) return;
 
   auto &req_entry = reqlog_[m.seq_num];
   // Buffer the prepare even if we haven't received PrePrepare yet (Out-of-Order handling)
@@ -185,7 +186,7 @@ void Node::on_commit(CommitMsg &&m, const MsgNetwork<uint8_t>::conn_t &) {
   // Discard message criteria
   if (view_changing_) return;
   if (m.view != view_) return;
-  if (m.seq_num <= h_ || m.seq_num > H_) return;
+  if (m.seq_num < h_ || m.seq_num > H_) return;
 
   auto &req_entry = reqlog_[m.seq_num];
   // Check digest
@@ -220,11 +221,16 @@ void Node::try_execute() {
     auto result = service_->execute(req_entry.req.operation);
 
     // Send reply to client
-    send_to_client(
-      req_entry.req.client_id,
-      ReplyMsg(view_, req_entry.req.timestamp, 
-               req_entry.req.client_id, id_, result));
+    auto reply = ReplyMsg(view_, req_entry.req.timestamp, 
+                          req_entry.req.client_id, id_, result);
+    send_to_client(req_entry.req.client_id, reply);
     metrics_->inc_msg("reply");
+    ClientReplyInfo cache_reply;
+
+    cache_reply.replica_id = reply.replica_id;
+    cache_reply.timestamp = reply.timestamp;
+    cache_reply.result = reply.result;
+    last_replies_[req_entry.req.client_id] = cache_reply;
 
     last_exec_++;
     if (last_exec_ % K == 0) make_checkpoint();
@@ -243,7 +249,7 @@ void Node::make_checkpoint() {
 
 void Node::on_checkpoint(CheckpointMsg &&m,
                          const MsgNetwork<uint8_t>::conn_t &) {
-  if (m.seq_num <= h_) return; // Old checkpoint
+  if (m.seq_num < h_) return; // Old checkpoint
   auto &cp_data = checkpoints_[m.seq_num];
   // Save vote for the checkpoint
   cp_data.votes[m.state_digest].insert(m.replica_id);
@@ -287,7 +293,7 @@ void Node::garbage_collect() {
 // --------------------------------------------------------------------------
 void Node::start_view_change() {
   view_changing_ = true;
-  uint64_t next_view = view_++; 
+  uint64_t next_view = ++view_;
   view_change_timeout_count_++;
 
   uint32_t last_stable_checkpoint = h_;
@@ -416,7 +422,7 @@ void Node::on_newview(NewViewMsg &&m, const salticidae::MsgNetwork<uint8_t>::con
   }
 }
 
-void Node::reset_timer() {  view_change_timer_.del();
+void Node::reset_timer() {
   view_change_timer_.del();
   // Exponential backoff: timeout doubles on each timeout
   double timeout = vc_timeout_ * (1u << view_change_timeout_count_);
