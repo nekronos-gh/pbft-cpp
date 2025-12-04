@@ -25,6 +25,7 @@ public:
   void add_replica(uint32_t id, const salticidae::NetAddr &addr);
   void add_client(uint32_t id, const salticidae::NetAddr &addr);
   void start(const salticidae::NetAddr &listen_addr);
+  void stop();
   void run();
 
 PBFT_TESTING_ACCESS:
@@ -96,7 +97,6 @@ PBFT_TESTING_ACCESS:
   void try_execute();
   void do_checkpoint();
   void start_view_change();
-  void reset_timer();
 
   // Liveness
   constexpr static const double vc_timeout_{2.0};
@@ -118,6 +118,13 @@ PBFT_TESTING_ACCESS:
   void make_checkpoint();
   void advance_watermarks(uint64_t stable_seq);
   void garbage_collect();
+
+  // Timer management
+  bool timer_running_;
+  void start_timer_if_not_running();
+  void stop_timer();
+  void manage_timer();
+  bool is_waiting_for_request();
 
   // Helpers
   bool is_primary() const { return id_ == (view_ % n_); }

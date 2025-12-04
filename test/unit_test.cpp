@@ -19,7 +19,6 @@ class MockService : public ServiceInterface {
 public:
   MOCK_METHOD(void, initialize, (), (override));
   MOCK_METHOD(std::string, execute, (const std::string&), (override));
-  MOCK_METHOD(std::vector<uint8_t>, get_checkpoint, (), (override));
   MOCK_METHOD(uint256_t, get_checkpoint_digest, (), (override));
 };
 

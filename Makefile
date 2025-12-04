@@ -12,9 +12,16 @@ configure:
 build: configure
 	cmake --build $(BUILD_DIR) -- -j$(shell nproc)
 
-.PHONY: test
-test: build
+.PHONY: unit-test
+unit-test: build
 	cd $(BUILD_DIR)/test && ctest --output-on-failure
+
+.PHONY: integration-test
+integration-test: build
+	cd $(BUILD_DIR)/test && ./integration_test
+
+.PHONY: test
+test: unit-test integration-test
 
 .PHONY: release
 release:

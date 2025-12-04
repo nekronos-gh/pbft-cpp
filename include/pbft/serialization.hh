@@ -10,6 +10,7 @@ using salticidae::DataStream;
 inline DataStream& operator>>(DataStream &s, std::string &str) {
     uint32_t len;
     s >> len;
+    len = salticidae::letoh(len);
     const uint8_t* ptr = s.get_data_inplace(len);
     str.assign((const char*)ptr, len);
     return s;
@@ -18,7 +19,7 @@ inline DataStream& operator>>(DataStream &s, std::string &str) {
 // Serialize vectors
 template<typename T>
 inline DataStream& operator<<(DataStream &s, const std::vector<T> &v) {
-    s << (uint32_t)v.size();
+    s << salticidae::letoh((uint32_t)v.size());
     for (const auto &e : v) s << e;
     return s;
 }
@@ -35,21 +36,21 @@ inline DataStream& operator>>(DataStream &s, std::vector<T> &v) {
 
 // Serialize sets
 template<typename T>
-inline DataStream& operator<<(DataStream &s, const std::set<T> &v) {
-    s << (uint32_t)v.size();
-    for (const auto &e : v) s << e;
+inline DataStream& operator<<(DataStream &s, const std::set<T> &set) {
+    s << salticidae::letoh((uint32_t)set.size());
+    for (const auto &e : set) s << e;
     return s;
 }
 
 // Deserialize sets
 template<typename T>
-inline DataStream& operator>>(DataStream &s, std::set<T> &v) {
+inline DataStream& operator>>(DataStream &s, std::set<T> &set) {
     uint32_t size;
     s >> size;
     for (uint32_t i = 0; i < size; i++) {
         T tmp;
         s >> tmp;
-        v.insert(tmp);
+        set.insert(tmp);
     }
     return s;
 }

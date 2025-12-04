@@ -36,14 +36,14 @@ namespace pbft {
     RequestMsg() = default;
     RequestMsg(const std::string &op, uint64_t ts, uint32_t cid)
       : operation(op), timestamp(ts), client_id(cid) {
-        serialized << operation << timestamp << client_id;
+        serialized << salticidae::htole((uint32_t)operation.size()) << operation << timestamp << client_id;
       }
     RequestMsg(DataStream &&s) {
-      s >> operation >> timestamp >> client_id; 
+      s >> operation >> timestamp >> client_id;
     }
 
     void serialize(DataStream &s) const {
-      s << (uint32_t)operation.size() << operation << timestamp << client_id;
+      s << salticidae::htole((uint32_t)operation.size()) << operation << timestamp << client_id;
     }
     void unserialize(DataStream &s) {
       s >> operation >> timestamp >> client_id;
@@ -64,7 +64,7 @@ namespace pbft {
 
     ReplyMsg(uint32_t v, uint64_t ts, uint32_t cid, uint32_t rid, const std::string &res)
       : view(v), timestamp(ts), client_id(cid), replica_id(rid), result(res) {
-        serialized << view << timestamp << client_id << replica_id << result;
+        serialized << view << timestamp << client_id << replica_id << salticidae::htole((uint32_t)result.size()) << result;
       }
     ReplyMsg(DataStream &&s) {
       s >> view >> timestamp >> client_id >> replica_id >> result; 
@@ -88,10 +88,10 @@ namespace pbft {
     PrePrepareMsg() = default;
     PrePrepareMsg(uint32_t v, uint64_t n, const uint256_t &rd, const RequestMsg& rqm)
       : view(v), seq_num(n), req_digest(rd), req(rqm) {
-        serialized << view << seq_num << req_digest << req.operation << req.timestamp << req.client_id;
+        serialized << view << seq_num << req_digest << req;
       }
     PrePrepareMsg(DataStream &&s) {
-      s >> view >> seq_num >> req_digest >> req.operation >> req.timestamp >> req.client_id;
+      s >> view >> seq_num >> req_digest >> req;
     }
 
     void serialize(DataStream &s) const {

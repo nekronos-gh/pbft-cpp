@@ -20,3 +20,10 @@ target_link_libraries(unit_tests
 
 # Register with CTest
 gtest_discover_tests(unit_tests)
+
+# Generate integration tests
+add_executable(integration_test integration_test.cpp)
+target_link_libraries(integration_test 
+    PRIVATE 
+    pbft::core
+)

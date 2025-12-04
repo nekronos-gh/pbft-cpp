@@ -22,10 +22,11 @@ Node::Node(uint32_t replica_id, uint32_t num_replicas,
 
   f_ = (n_ - 1) / 3;
   service_->initialize();
-  std::string metrics_addr = "0.0.0.0:" + std::to_string(9460 + id_); // TODO: Make configurable
+  std::string metrics_addr = "0.0.0.0:" + std::to_string(9460 + id_);
   metrics_ = std::make_unique<Metrics>(metrics_addr); 
 
   metrics_->set_view(view_);
+
   register_handlers();
 }
 
@@ -40,10 +41,17 @@ void Node::add_client(uint32_t id, const NetAddr &addr) {
 void Node::start(const NetAddr &listen_addr) {
   net_->start();
   net_->listen(listen_addr);
-  reset_timer();
 }
 
-void Node::run() { ec_.dispatch(); }
+void Node::stop() { 
+  if (net_) {
+    net_.reset(); 
+  }
+  ec_.stop();
+}
+
+void Node::run() { ec_.dispatch();}
+
 
 void Node::register_handlers() {
   net_->reg_handler(salticidae::generic_bind(&Node::on_request, this, _1, _2));
@@ -61,11 +69,10 @@ void Node::register_handlers() {
 void Node::on_request(RequestMsg &&m, 
                       const MsgNetwork<uint8_t>::conn_t &) {
   metrics_->inc_msg("request");
-    
+  if (view_changing_) return;
+
   // Requests are only processed by primary
   if (is_primary()) {
-    if (view_changing_) return;
-
     // Check for duplicate request by (client_id, timestamp)
     auto last_reply_it = last_replies_.find(m.client_id);
     if (last_reply_it != last_replies_.end()) {
@@ -93,13 +100,11 @@ void Node::on_request(RequestMsg &&m,
     // Broadcast preprepare message to replicas
     broadcast(PrePrepareMsg(view_, seq_num_, request.digest, m));
 
-    // Primary also considers itself as having received pre-prepare
     request.prepares.insert(id_);
     metrics_->set_inflight(reqlog_.size());
   } else {
-    // Otherwise, broadcast
-    broadcast(m);
-    reset_timer();
+    // Otherwise, send to primary
+    send_to_replica(primary(), m);
   }
 }
 
@@ -121,6 +126,8 @@ void Node::on_preprepare(PrePrepareMsg &&m,
   if (req_entry.has_preprepare && req_entry.digest != m.req_digest) {
     return;
   }
+  // The request is valid, start the timer for view change
+  start_timer_if_not_running();
 
   // Begin PRE_PREPARE phase
   req_entry.view = m.view;
@@ -135,7 +142,7 @@ void Node::on_preprepare(PrePrepareMsg &&m,
 
   // Set the node itself as prepared in the set
   req_entry.prepares.insert(id_);
-  reset_timer();
+  
   try_prepare(req_entry);
 }
 
@@ -233,6 +240,10 @@ void Node::try_execute() {
     last_replies_[req_entry.req.client_id] = cache_reply;
 
     last_exec_++;
+    
+    // Stop timer if no longer waiting, restart if still waiting for other requests
+    manage_timer();
+    
     if (last_exec_ % K == 0) make_checkpoint();
   }
 }
@@ -295,6 +306,9 @@ void Node::start_view_change() {
   view_changing_ = true;
   uint64_t next_view = ++view_;
   view_change_timeout_count_++;
+  
+  // Stop the timer when starting view change
+  stop_timer();
 
   uint32_t last_stable_checkpoint = h_;
   // Create C set (Valid Checkpoints) 
@@ -318,9 +332,6 @@ void Node::start_view_change() {
   ViewChangeMsg vc(next_view, last_stable_checkpoint, id_, C, P);
   broadcast(vc);
   on_viewchange(std::move(vc), MsgNetwork<uint8_t>::conn_t{});
-
-  // Set timer for next view change (exponential backoff)
-  reset_timer();
 }
 
 void Node::on_viewchange(ViewChangeMsg &&m, const MsgNetwork<uint8_t>::conn_t &) {
@@ -383,7 +394,9 @@ void Node::on_viewchange(ViewChangeMsg &&m, const MsgNetwork<uint8_t>::conn_t &)
     view_changing_ = false;
     view_ = m.next_view;
     view_change_timeout_count_ = 0;
-    reset_timer();
+    
+    // Stop timer and restart if we have pending requests
+    manage_timer();
   }
 }
 
@@ -411,23 +424,57 @@ void Node::on_newview(NewViewMsg &&m, const salticidae::MsgNetwork<uint8_t>::con
   }
 
   // Update View
-  view_ = m.next_view;
   view_changing_ = false;
+  view_ = m.next_view;
   view_change_timeout_count_ = 0;
-  reset_timer();
 
   // Process PrePrepares in O set
   for (auto &pp : m.pre_prepares) {
     on_preprepare(std::move(pp), salticidae::MsgNetwork<uint8_t>::conn_t{});
   }
+  
+  // Stop if no pending requests
+  manage_timer();
 }
 
-void Node::reset_timer() {
-  view_change_timer_.del();
-  // Exponential backoff: timeout doubles on each timeout
-  double timeout = vc_timeout_ * (1u << view_change_timeout_count_);
-  timeout = std::min(timeout, 300.0); // Cap at 5 minutes
-  view_change_timer_.add(timeout);
+bool Node::is_waiting_for_request() {
+  // We are waiting if there's any request received but not yet executed
+  for (const auto &entry : reqlog_) {
+    if (entry.second.has_preprepare && entry.first > last_exec_) {
+      return true;
+    }
+  }
+  return false;
+}
+
+void Node::start_timer_if_not_running() {
+  if (!timer_running_ && !view_changing_) {
+    double timeout = vc_timeout_ * (1u << view_change_timeout_count_);
+    timeout = std::min(timeout, 300.0); // Cap at 5 minutes
+    view_change_timer_.add(timeout);
+    timer_running_ = true;
+  }
+}
+
+void Node::stop_timer() {
+  if (timer_running_) {
+    view_change_timer_.del();
+    timer_running_ = false;
+  }
+}
+
+// Helper function to manage timer after execution
+void Node::manage_timer() {
+  if (!is_waiting_for_request()) {
+    // Stop the timer when no longer waiting to execute any request
+    stop_timer();
+  } else {
+    // Restart the timer if we are still waiting for other requests
+    if (timer_running_) {
+      stop_timer();
+      start_timer_if_not_running();
+    }
+  }
 }
 
 template <typename M>
