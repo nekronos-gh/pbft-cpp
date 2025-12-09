@@ -58,7 +58,6 @@ void Node::stop() {
 
 void Node::run() { ec_.dispatch();}
 
-
 void Node::register_handlers() {
   net_->reg_handler(salticidae::generic_bind(&Node::on_request, this, _1, _2));
   net_->reg_handler(salticidae::generic_bind(&Node::on_preprepare, this, _1, _2));
@@ -175,10 +174,10 @@ void Node::on_prepare(PrepareMsg &&m,
 }
 
 void Node::try_prepare(ReqLogEntry &req_entry) {
-  // Total needed matching PrePrepare: 2f from others + 1 (Primary's PrePrepare).
+  // Total needed matching PrePrepare: 2f Prepares + 1 PrePrepared
   if (req_entry.stage == ReqStage::PRE_PREPARED && 
     req_entry.has_preprepare && 
-    req_entry.prepares.size() >= 2 * f_ + 1) { // 2f others + me 
+    req_entry.prepares.size() >= 2 * f_) { 
 
     req_entry.stage = ReqStage::PREPARED;
 

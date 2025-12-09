@@ -1,6 +1,6 @@
 #pragma once
 #ifndef PBFT_TESTING_ACCESS
-    #define PBFT_TESTING_ACCESS private
+  #define PBFT_TESTING_ACCESS private
 #endif
 #include "pbft/messages.hh"
 #include "pbft/metrics.hh"
@@ -108,9 +108,9 @@ PBFT_TESTING_ACCESS:
 
   // Checkpointing
   struct CheckpointVotes {
-      // Checkpoint storage: seq -> (digest -> {replicas})
-      std::unordered_map<uint256_t, std::set<uint32_t>> votes;
-      bool stable = false;
+    // Checkpoint storage: seq -> (digest -> {replicas})
+    std::unordered_map<uint256_t, std::set<uint32_t>> votes;
+    bool stable = false;
   };
   std::map<uint64_t, CheckpointVotes> checkpoints_;
   uint256_t last_stable_digest_;
