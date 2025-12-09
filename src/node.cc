@@ -293,7 +293,7 @@ void Node::garbage_collect() {
     if (it->first <= h_)
       it = reqlog_.erase(it);
     else
-      ++it;
+      it++;
   }
 
   // Drop all checkpoint tracking strictly older than the stable one
@@ -301,7 +301,7 @@ void Node::garbage_collect() {
     if (it->first < h_)
       it = checkpoints_.erase(it);
     else
-      ++it;
+      it++;
   }
 }
 

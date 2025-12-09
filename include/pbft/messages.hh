@@ -261,13 +261,13 @@ namespace pbft {
       uint32_t count;
 
       s >> count;
-      for(uint32_t i = 0; i < count; ++i) {
+      for(uint32_t i = 0; i < count; i++) {
         ViewChangeMsg tmp; s >> tmp;
         view_changes.emplace_back(std::move(tmp));
       }
 
       s >> count;
-      for(uint32_t i=0; i<count; ++i) {
+      for(uint32_t i=0; i<count; i++) {
         PrePrepareMsg tmp; s >> tmp;
         pre_prepares.emplace_back(std::move(tmp));
       }

@@ -305,7 +305,7 @@ TEST_F(PBFTNodeTest, TryPrepareReachesPreparedWhenQuorumMet) {
   ASSERT_TRUE(entry.prepares.count(node_->id_));
 
   // Reach 2f + 1
-  for (uint64_t i = 0; i < 2 * MAX_FAULTY + 1; ++i) {
+  for (uint64_t i = 0; i < 2 * MAX_FAULTY + 1; i++) {
     PrepareMsg p(node_->view_, seq, digest, i);
     node_->on_prepare(std::move(p), dummy_conn);
   }
@@ -323,7 +323,7 @@ TEST_F(PBFTNodeTest, TryPrepareDoesNotTriggerIfNotPrePrepared) {
   entry.has_preprepare = false;
   entry.stage = Node::ReqStage::NONE;
   // Reach 2f + 1
-  for (uint64_t i = 0; i < 2 * MAX_FAULTY + 1; ++i) {
+  for (uint64_t i = 0; i < 2 * MAX_FAULTY + 1; i++) {
     entry.prepares.insert(i);
   }
   node_->try_prepare(entry);
@@ -412,7 +412,7 @@ TEST_F(PBFTNodeTest, TryCommitTransitionsToCommittedWithQuorum) {
 
   // Insert enough commits
   // Reach 2f + 1
-  for (uint64_t i = 0; i < 2 * MAX_FAULTY + 1; ++i) {
+  for (uint64_t i = 0; i < 2 * MAX_FAULTY + 1; i++) {
     entry.commits.insert(i);
   }
 
@@ -428,7 +428,7 @@ TEST_F(PBFTNodeTest, TryCommitDoesNotTransitionIfNotPrepared) {
 
   // Insert enough commits
   // Reach 2f + 1
-  for (uint64_t i = 0; i < 2 * MAX_FAULTY + 1; ++i) {
+  for (uint64_t i = 0; i < 2 * MAX_FAULTY + 1; i++) {
     entry.commits.insert(i);
   }
   node_->try_commit(entry);
@@ -461,7 +461,7 @@ TEST_F(PBFTNodeTest, CommitTriggersExecutionOnCommitted) {
 
   // Simulate commits to reach quorum and PREPARED state
   // 2f + 1
-  for (uint64_t i = 0; i < 2 * MAX_FAULTY + 1; ++i) {
+  for (uint64_t i = 0; i < 2 * MAX_FAULTY + 1; i++) {
     CommitMsg commit(node_->view_, seq, entry.digest, i);
     node_->on_commit(std::move(commit), dummy_conn);
   }
@@ -492,7 +492,7 @@ TEST_F(PBFTNodeTest, RequestStateTransitionsPipeline) {
   
   // Add prepares to reach quorum
   // Reach 2f + 1
-  for (uint64_t i = 0; i < 2 * MAX_FAULTY + 1; ++i) {
+  for (uint64_t i = 0; i < 2 * MAX_FAULTY + 1; i++) {
     entry.prepares.insert(i);
   }
   node_->try_prepare(entry);
@@ -500,7 +500,7 @@ TEST_F(PBFTNodeTest, RequestStateTransitionsPipeline) {
   
   // Add commits to reach quorum
   // Reach 2f + 1
-  for (uint64_t i = 0; i < 2 * MAX_FAULTY + 1; ++i) {
+  for (uint64_t i = 0; i < 2 * MAX_FAULTY + 1; i++) {
     entry.commits.insert(i);
   }
   node_->try_commit(entry);
@@ -564,7 +564,7 @@ TEST_F(PBFTNodeTest, OnCheckpointTriggersStability) {
   node_->reqlog_[250].seq = 250; // Should survive
 
   // Add 2f existing votes
-  for (uint64_t i = 0; i < 2 * MAX_FAULTY; ++i) {
+  for (uint64_t i = 0; i < 2 * MAX_FAULTY; i++) {
     node_->checkpoints_[seq].votes[digest].insert(i);
   }
 
@@ -713,7 +713,7 @@ TEST_F(PBFTNodeTest, OnNewViewUpdatesStateAndProcessesOset) {
 
   // Create Valid V set (3 VCs)
   std::vector<ViewChangeMsg> V;
-  for(int i = 0; i < 2 * MAX_FAULTY + 1; ++i) {
+  for(int i = 0; i < 2 * MAX_FAULTY + 1; i++) {
     V.emplace_back(new_view, 0, i, std::vector<CheckpointMsg>{}, std::vector<PrepareProof>{});
   }
 
@@ -787,7 +787,7 @@ TEST_F(PBFTNodeTest, LogOverflowProtection) {
   node_->H_ = 10;  // Small window for testing
   
   // Fill log to capacity
-  for (uint64_t i = 1; i <= 10; ++i) {
+  for (uint64_t i = 1; i <= 10; i++) {
     RequestMsg req("op" + std::to_string(i), 1000 + i, 1);
     if (node_->is_primary()) {
       node_->on_request(std::move(req), salticidae::MsgNetwork<uint8_t>::conn_t{});

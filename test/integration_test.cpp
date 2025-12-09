@@ -103,7 +103,7 @@ public:
     std::cout << "[Cluster] Starting..." << std::endl;
     // Initialize all replicas with their respective services
     replicas_.reserve(n_);
-    for (uint32_t i = 0; i < n_; ++i) {
+    for (uint32_t i = 0; i < n_; i++) {
       ReplicaInfo info;
       info.id = i;
 
@@ -116,7 +116,7 @@ public:
     }
 
     // Start Node Threads
-    for (uint32_t i = 0; i < n_; ++i) {
+    for (uint32_t i = 0; i < n_; i++) {
       replicas_[i].thread = std::thread([this, i]() {
         NetAddr listen_addr("127.0.0.1:" + std::to_string(10000 + i));
         replicas_[i].addr = listen_addr;
@@ -127,8 +127,8 @@ public:
     }
 
     // Configure peers
-    for (uint32_t i = 0; i < n_; ++i) {
-      for (uint32_t j = 0; j < n_; ++j) {
+    for (uint32_t i = 0; i < n_; i++) {
+      for (uint32_t j = 0; j < n_; j++) {
         if (i != j) {
           NetAddr peer("127.0.0.1:" + std::to_string(10000 + j));
           replicas_[i].node->add_replica(j, peer);
@@ -148,7 +148,7 @@ public:
     });
 
     // Connect client to all replicas
-    for (uint32_t i = 0; i < n_; ++i) {
+    for (uint32_t i = 0; i < n_; i++) {
       replicas_[i].conn = client_net_->connect_sync(replicas_[i].addr);
     }
 
@@ -406,7 +406,7 @@ bool test_sequential() {
   TestCluster cluster(4);
   cluster.start();
 
-  for (int i = 0; i < 10; ++i) {
+  for (int i = 0; i < 10; i++) {
     cluster.send_request("INC", 0);
   }
 
