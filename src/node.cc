@@ -31,11 +31,11 @@ Node::Node(uint32_t replica_id, uint32_t num_replicas,
 }
 
 void Node::add_replica(uint32_t id, const NetAddr &addr) {
-  peers_[id] = addr;
+  peers_[id] = net_->connect_sync(addr);
 }
 
 void Node::add_client(uint32_t id, const NetAddr &addr) {
-  clients_[id] = addr;
+  clients_[id] = net_->connect_sync(addr);
 }
 
 void Node::start(const NetAddr &listen_addr) {
@@ -44,10 +44,16 @@ void Node::start(const NetAddr &listen_addr) {
 }
 
 void Node::stop() { 
-  if (net_) {
-    net_.reset(); 
-  }
   ec_.stop();
+  if (net_) {
+    for (const auto &kv : peers_) {
+      net_->terminate(kv.second);
+    }
+    for (const auto &kv : clients_) {
+      net_->terminate(kv.second);
+    }
+    net_->stop(); 
+  }
 }
 
 void Node::run() { ec_.dispatch();}
@@ -482,7 +488,7 @@ void Node::broadcast(const M &m) {
   for (const auto &kv : peers_) {
     if (kv.first == id_)
       continue;
-    net_->send_msg(m, net_->connect_sync(kv.second));
+    net_->send_msg(m, kv.second);
   }
 }
 
@@ -491,7 +497,7 @@ void Node::send_to_replica(uint32_t replica_id, const M& m) {
   auto it = peers_.find(replica_id);
   if (it == peers_.end())
     return;
-  net_->send_msg(m, net_->connect_sync(it->second));
+  net_->send_msg(m, it->second);
 }
 
 template <typename M> 
@@ -499,7 +505,7 @@ void Node::send_to_client(uint32_t client_id, const M& m) {
   auto it = clients_.find(client_id);
   if (it == clients_.end())
     return;
-  net_->send_msg(m, net_->connect_sync(it->second));
+  net_->send_msg(m, it->second);
 }
 
 } // namespace pbft

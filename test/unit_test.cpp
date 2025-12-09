@@ -79,7 +79,7 @@ TEST_F(PBFTNodeTest, AddReplicaStoresAddress) {
   node_->add_replica(1, addr);
 
   ASSERT_EQ(node_->peers_.size(), 1);
-  EXPECT_EQ(node_->peers_[1], addr);
+  EXPECT_EQ(node_->peers_[1]->get_addr(), addr);
 }
 
 TEST_F(PBFTNodeTest, OverwriteReplicaAddress) {
@@ -90,7 +90,7 @@ TEST_F(PBFTNodeTest, OverwriteReplicaAddress) {
   node_->add_replica(1, addr2);
 
   ASSERT_EQ(node_->peers_.size(), 1);
-  EXPECT_EQ(node_->peers_[1], addr2);
+  EXPECT_EQ(node_->peers_[1]->get_addr(), addr2);
 }
 
 TEST_F(PBFTNodeTest, AddClientStoresAddress) {
@@ -99,7 +99,7 @@ TEST_F(PBFTNodeTest, AddClientStoresAddress) {
   node_->add_client(100, client_addr);
 
   ASSERT_EQ(node_->clients_.size(), 1);
-  EXPECT_EQ(node_->clients_[100], client_addr);
+  EXPECT_EQ(node_->clients_[100]->get_addr(), client_addr);
 }
 
 // ============================================================================

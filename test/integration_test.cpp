@@ -77,6 +77,8 @@ private:
     TestService* service;
     std::thread thread;
     bool crashed = false;
+    NetAddr addr;
+    MsgNetwork<uint8_t>::conn_t conn;
     bool byzantine = false;
   };
 
@@ -113,6 +115,17 @@ public:
       replicas_.push_back(std::move(info));
     }
 
+    // Start Node Threads
+    for (uint32_t i = 0; i < n_; ++i) {
+      replicas_[i].thread = std::thread([this, i]() {
+        NetAddr listen_addr("127.0.0.1:" + std::to_string(10000 + i));
+        replicas_[i].addr = listen_addr;
+        replicas_[i].node->start(listen_addr);
+        replicas_[i].node->run();
+      });
+      std::cout << "[Replica " << i << "] Started on port " << (10000 + i) << std::endl;
+    }
+
     // Configure peers
     for (uint32_t i = 0; i < n_; ++i) {
       for (uint32_t j = 0; j < n_; ++j) {
@@ -122,16 +135,6 @@ public:
         }
       }
       replicas_[i].node->add_client(client_id_, client_addr_);
-    }
-
-    // Start Node Threads
-    for (uint32_t i = 0; i < n_; ++i) {
-      replicas_[i].thread = std::thread([this, i]() {
-        NetAddr listen_addr("127.0.0.1:" + std::to_string(10000 + i));
-        replicas_[i].node->start(listen_addr);
-        replicas_[i].node->run();
-      });
-      std::cout << "[Replica " << i << "] Started on port " << (10000 + i) << std::endl;
     }
 
     // Setup Client
@@ -144,50 +147,47 @@ public:
       client_ec_.dispatch();
     });
 
+    // Connect client to all replicas
+    for (uint32_t i = 0; i < n_; ++i) {
+      replicas_[i].conn = client_net_->connect_sync(replicas_[i].addr);
+    }
+
     std::cout << "[Cluster] Started" << std::endl;
   }
 
   void stop() {
     std::cout << "[Cluster] Stopping..." << std::endl;
-    // Force stopping as 
     // Stop client
     client_ec_.stop();
+    if (client_net_) {
+      for (uint32_t i = 0; i < n_; i++) {
+        client_net_->terminate(replicas_[i].conn);
+      }
+      client_net_->stop();
+    }
     if (client_thread_.joinable()) {
-        pthread_cancel(client_thread_.native_handle());
         client_thread_.join();
     }
+    std::cout << "[Cluster] Client stopped" << std::endl;
 
     // Stop replicas
     for (auto& rep : replicas_) {
         rep.node->stop();
         if (rep.thread.joinable()) {
-            pthread_cancel(rep.thread.native_handle());
             rep.thread.join();
         }
     }
 
-    if (client_net_) client_net_.reset();
-    
     replicas_.clear();
     std::cout << "[Cluster] Stopped\n" << std::endl;
   }
 
-  void send_request(const std::string& operation) {
+  void send_request(const std::string& operation, uint32_t replica_id) {
     RequestMsg req(operation, request_counter_++, client_id_);
 
     std::cout << "[Client] Sending: " << operation << " to cluster" << std::endl;
-
-    salticidae::NetAddr access_node("127.0.0.1:10000");
-
-    auto conn = client_net_->connect_sync(access_node);
-
-    if (conn) {
-      client_net_->send_msg(req, conn);
-    } else {
-      std::cerr << "[Client] Failed to connect cluster" << std::endl;
-    }
+    client_net_->send_msg(req, replicas_[replica_id].conn);
   }
-
 
   void on_reply(ReplyMsg &&m, const MsgNetwork<uint8_t>::conn_t &) {
     std::cout << "[Client] Received Reply from Replica " << m.replica_id 
@@ -322,9 +322,9 @@ bool test_normal_operation() {
   TestCluster cluster(4);
   cluster.start();
 
-  cluster.send_request("INC");
-  cluster.send_request("INC");
-  cluster.send_request("ADD:5");
+  cluster.send_request("INC", 0);
+  cluster.send_request("INC", 0);
+  cluster.send_request("ADD:5", 0);
 
   cluster.wait_for_exec(3);
   bool passed = cluster.verify_consensus();
@@ -343,8 +343,8 @@ bool test_f_crashed() {
 
   cluster.crash_replica(3);
 
-  cluster.send_request("SET:10");
-  cluster.send_request("INC");
+  cluster.send_request("SET:10", 0);
+  cluster.send_request("INC", 0);
 
   cluster.wait_for_exec(2);
   bool passed = cluster.verify_consensus();
@@ -363,8 +363,8 @@ bool test_byzantine() {
 
   cluster.mark_byzantine(2);
 
-  cluster.send_request("SET:100");
-  cluster.send_request("ADD:50");
+  cluster.send_request("SET:100", 0);
+  cluster.send_request("ADD:50", 0);
 
   cluster.wait_for_exec(2);
   bool passed = cluster.verify_consensus();
@@ -385,11 +385,11 @@ bool test_view_change() {
   TestCluster cluster(4);
   cluster.start();
 
-  cluster.send_request("SET:42");
+  cluster.send_request("SET:42", 1);
 
   cluster.crash_replica(0);
 
-  cluster.send_request("INC");
+  cluster.send_request("INC", 1);
 
   cluster.wait_for_exec(2);
   bool passed = cluster.verify_consensus();
@@ -406,9 +406,8 @@ bool test_sequential() {
   TestCluster cluster(4);
   cluster.start();
 
-  // Fix CONNECT SYNC, and create one connection per client, not many
   for (int i = 0; i < 10; ++i) {
-    cluster.send_request("INC");
+    cluster.send_request("INC", 0);
   }
 
   cluster.wait_for_exec(10);
@@ -426,11 +425,11 @@ bool test_mixed() {
   TestCluster cluster(4);
   cluster.start();
 
-  cluster.send_request("SET:0");
-  cluster.send_request("INC");
-  cluster.send_request("INC");
-  cluster.send_request("ADD:10");
-  cluster.send_request("DEC");
+  cluster.send_request("SET:0", 0);
+  cluster.send_request("INC", 0);
+  cluster.send_request("INC", 0);
+  cluster.send_request("ADD:10", 0);
+  cluster.send_request("DEC", 0);
 
   cluster.wait_for_exec(5);
   bool passed = cluster.verify_consensus();

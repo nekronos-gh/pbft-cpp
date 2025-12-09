@@ -37,8 +37,8 @@ PBFT_TESTING_ACCESS:
   // Network
   salticidae::EventContext ec_;
   std::unique_ptr<salticidae::MsgNetwork<uint8_t>> net_;
-  std::unordered_map<uint32_t, salticidae::NetAddr> peers_;
-  std::unordered_map<uint32_t, salticidae::NetAddr> clients_;
+  std::unordered_map<uint32_t, salticidae::MsgNetwork<uint8_t>::conn_t> peers_;
+  std::unordered_map<uint32_t, salticidae::MsgNetwork<uint8_t>::conn_t> clients_;
 
   // State (Sane defaults)
   uint32_t view_{0};
