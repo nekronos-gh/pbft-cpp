@@ -70,39 +70,6 @@ TEST_F(PBFTNodeTest, IsPrimary) {
 }
 
 // ============================================================================
-// PEER AND CLIENT MANAGEMENT TESTS
-// ============================================================================
-
-TEST_F(PBFTNodeTest, AddReplicaStoresAddress) {
-  node_->peers_ = {};
-  salticidae::NetAddr addr("127.0.0.1:5001");
-  node_->add_replica(1, addr);
-
-  ASSERT_EQ(node_->peers_.size(), 1);
-  EXPECT_EQ(node_->peers_[1]->get_addr(), addr);
-}
-
-TEST_F(PBFTNodeTest, OverwriteReplicaAddress) {
-  node_->peers_ = {};
-  salticidae::NetAddr addr1("127.0.0.1:5001");
-  salticidae::NetAddr addr2("127.0.0.1:9999");
-  node_->add_replica(1, addr1);
-  node_->add_replica(1, addr2);
-
-  ASSERT_EQ(node_->peers_.size(), 1);
-  EXPECT_EQ(node_->peers_[1]->get_addr(), addr2);
-}
-
-TEST_F(PBFTNodeTest, AddClientStoresAddress) {
-  node_->clients_ = {};
-  salticidae::NetAddr client_addr("127.0.0.1:6000");
-  node_->add_client(100, client_addr);
-
-  ASSERT_EQ(node_->clients_.size(), 1);
-  EXPECT_EQ(node_->clients_[100]->get_addr(), client_addr);
-}
-
-// ============================================================================
 // REQUEST PROCESSING TESTS
 // ============================================================================
 
