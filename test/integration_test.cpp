@@ -106,19 +106,17 @@ public:
     for (uint32_t i = 0; i < n_; i++) {
       ReplicaInfo info;
       info.id = i;
-
       auto service = std::make_unique<TestService>();
       service->initialize();
       info.service = service.get();
       info.node = std::make_unique<Node>(i, n_, std::move(service));
-
       replicas_.push_back(std::move(info));
     }
 
     // Start Node Threads
     for (uint32_t i = 0; i < n_; i++) {
-      replicas_[i].thread = std::thread([this, i]() {
-        NetAddr listen_addr("127.0.0.1:" + std::to_string(10000 + i));
+      NetAddr listen_addr("127.0.0.1:" + std::to_string(10000 + i));
+      replicas_[i].thread = std::thread([this, i, listen_addr]() {
         replicas_[i].addr = listen_addr;
         replicas_[i].node->start(listen_addr);
         replicas_[i].node->run();
@@ -130,8 +128,7 @@ public:
     for (uint32_t i = 0; i < n_; i++) {
       for (uint32_t j = 0; j < n_; j++) {
         if (i != j) {
-          NetAddr peer("127.0.0.1:" + std::to_string(10000 + j));
-          replicas_[i].node->add_replica(j, peer);
+          replicas_[i].node->add_replica(j, replicas_[j].addr);
         }
       }
       replicas_[i].node->add_client(client_id_, client_addr_);
@@ -184,7 +181,6 @@ public:
 
   void send_request(const std::string& operation, uint32_t replica_id) {
     RequestMsg req(operation, request_counter_++, client_id_);
-
     std::cout << "[Client] Sending: " << operation << " to cluster" << std::endl;
     client_net_->send_msg(req, replicas_[replica_id].conn);
   }
