@@ -204,7 +204,7 @@ public:
   }
 
   // Wait untill a number of executions have been observed in the service for each node
-  void wait_for_exec(size_t expected_ops, uint32_t timeout_ms = 5000) {
+  bool wait_for_operations(size_t expected_ops, uint32_t timeout_ms = 5000) {
     auto start = std::chrono::steady_clock::now();
 
     while (true) {
@@ -226,7 +226,7 @@ public:
       }
 
       if (correct_count > 0 && all_reached) {
-        return;
+        return true;
       }
 
       // Check timeout
@@ -235,7 +235,7 @@ public:
 
       if (elapsed > timeout_ms) {
         std::cout << "[Wait] Timeout waiting for " << expected_ops << " operations" << std::endl;
-        return;
+        return false;
       }
 
       std::this_thread::sleep_for(std::chrono::milliseconds(50));
@@ -314,6 +314,7 @@ bool test_normal_operation() {
   std::cout << "╔══════════════════════════════════════════════╗" << std::endl;
   std::cout << "║  TEST: Normal Operation                      ║" << std::endl;
   std::cout << "╚══════════════════════════════════════════════╝" << std::endl;
+  bool passed = true;
 
   TestCluster cluster(4);
   cluster.start();
@@ -322,8 +323,12 @@ bool test_normal_operation() {
   cluster.send_request("INC", 0);
   cluster.send_request("ADD:5", 0);
 
-  cluster.wait_for_exec(3);
-  bool passed = cluster.verify_consensus();
+  if (!cluster.wait_for_operations(3)) {
+    passed = false;
+  }
+  if (!cluster.verify_consensus()) {
+    passed = false;
+  }
   cluster.stop();
 
   return passed;
@@ -333,6 +338,7 @@ bool test_f_crashed() {
   std::cout << "╔══════════════════════════════════════════════╗" << std::endl;
   std::cout << "║  TEST: f=1 Crashed Node                      ║" << std::endl;
   std::cout << "╚══════════════════════════════════════════════╝" << std::endl;
+  bool passed = true;
 
   TestCluster cluster(4);
   cluster.start();
@@ -342,8 +348,12 @@ bool test_f_crashed() {
   cluster.send_request("SET:10", 0);
   cluster.send_request("INC", 0);
 
-  cluster.wait_for_exec(2);
-  bool passed = cluster.verify_consensus();
+  if (!cluster.wait_for_operations(2)) {
+    passed = false;
+  }
+  if (!cluster.verify_consensus()) {
+    passed = false;
+  }
   cluster.stop();
 
   return passed;
@@ -353,6 +363,7 @@ bool test_byzantine() {
   std::cout << "╔══════════════════════════════════════════════╗" << std::endl;
   std::cout << "║  TEST: f=1 Byzantine Node                    ║" << std::endl;
   std::cout << "╚══════════════════════════════════════════════╝" << std::endl;
+  bool passed = true;
 
   TestCluster cluster(4);
   cluster.start();
@@ -362,8 +373,12 @@ bool test_byzantine() {
   cluster.send_request("SET:100", 0);
   cluster.send_request("ADD:50", 0);
 
-  cluster.wait_for_exec(2);
-  bool passed = cluster.verify_consensus();
+  if (!cluster.wait_for_operations(2)) {
+    passed = false;
+  }
+  if (!cluster.verify_consensus()) {
+    passed = false;
+  }
   cluster.stop();
 
   return passed;
@@ -377,6 +392,7 @@ bool test_view_change() {
   std::cout << "╔══════════════════════════════════════════════╗" << std::endl;
   std::cout << "║  TEST: View Change (Primary Failure)         ║" << std::endl;
   std::cout << "╚══════════════════════════════════════════════╝" << std::endl;
+  bool passed = true;
 
   TestCluster cluster(4);
   cluster.start();
@@ -387,10 +403,13 @@ bool test_view_change() {
 
   cluster.send_request("INC", 1);
 
-  cluster.wait_for_exec(2);
-  bool passed = cluster.verify_consensus();
+  if (!cluster.wait_for_operations(2)){
+    passed = false;
+  }
+  if (!cluster.verify_consensus()){
+    passed = false;
+  }
   cluster.stop();
-
   return passed;
 }
 
@@ -398,6 +417,7 @@ bool test_sequential() {
   std::cout << "╔══════════════════════════════════════════════╗" << std::endl;
   std::cout << "║  TEST: Sequential Operations                 ║" << std::endl;
   std::cout << "╚══════════════════════════════════════════════╝" << std::endl;
+  bool passed = true;
 
   TestCluster cluster(4);
   cluster.start();
@@ -406,8 +426,12 @@ bool test_sequential() {
     cluster.send_request("INC", 0);
   }
 
-  cluster.wait_for_exec(10);
-  bool passed = cluster.verify_consensus();
+  if (!cluster.wait_for_operations(10)) {
+    passed = false;
+  }
+  if (!cluster.verify_consensus()) {
+    passed = false;
+  }
   cluster.stop();
 
   return passed;
@@ -417,6 +441,7 @@ bool test_mixed() {
   std::cout << "╔══════════════════════════════════════════════╗" << std::endl;
   std::cout << "║  TEST: Mixed Operations                      ║" << std::endl;
   std::cout << "╚══════════════════════════════════════════════╝" << std::endl;
+  bool passed = true;
 
   TestCluster cluster(4);
   cluster.start();
@@ -427,8 +452,12 @@ bool test_mixed() {
   cluster.send_request("ADD:10", 0);
   cluster.send_request("DEC", 0);
 
-  cluster.wait_for_exec(5);
-  bool passed = cluster.verify_consensus();
+  if (!cluster.wait_for_operations(5)) {
+    passed = false;
+  }
+  if (!cluster.verify_consensus()) {
+    passed = false;
+  }
   cluster.stop();
 
   return passed;
@@ -471,8 +500,6 @@ int main() {
       std::cout << name << " EXCEPTION: " << e.what() << std::endl;
       failed++;
     }
-
-    std::this_thread::sleep_for(std::chrono::milliseconds(300));
   }
 
   std::cout << "\n╔══════════════════════════════════════════════╗" << std::endl;
