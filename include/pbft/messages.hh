@@ -36,8 +36,8 @@ namespace pbft {
     RequestMsg() = default;
     RequestMsg(const std::string &op, uint64_t ts, uint32_t cid)
       : operation(op), timestamp(ts), client_id(cid) {
-        serialized << salticidae::htole((uint32_t)operation.size()) << operation << timestamp << client_id;
-      }
+      serialized << salticidae::htole((uint32_t)operation.size()) << operation << timestamp << client_id;
+    }
     RequestMsg(DataStream &&s) {
       s >> operation >> timestamp >> client_id;
     }

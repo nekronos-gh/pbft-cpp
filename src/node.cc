@@ -56,7 +56,7 @@ void Node::stop() {
   }
 }
 
-void Node::run() { ec_.dispatch();}
+void Node::run() { ec_.dispatch(); }
 
 void Node::register_handlers() {
   net_->reg_handler(salticidae::generic_bind(&Node::on_request, this, _1, _2));
@@ -67,6 +67,7 @@ void Node::register_handlers() {
   net_->reg_handler(salticidae::generic_bind(&Node::on_viewchange, this, _1, _2));
   net_->reg_handler(salticidae::generic_bind(&Node::on_newview, this, _1, _2));
 }
+
 
 // --------------------------------------------------------------------------
 // REQUEST
@@ -109,7 +110,8 @@ void Node::on_request(RequestMsg &&m,
     metrics_->set_inflight(reqlog_.size());
   } else {
     // Otherwise, send to primary
-    send_to_replica(primary(), m);
+    
+    send_to_replica(primary(), RequestMsg(m.operation, m.timestamp, m.client_id));
   }
 }
 
@@ -117,7 +119,7 @@ void Node::on_request(RequestMsg &&m,
 // PRE-PREPARE
 // --------------------------------------------------------------------------
 void Node::on_preprepare(PrePrepareMsg &&m,
-                         const MsgNetwork<uint8_t>::conn_t &) {
+                         const MsgNetwork<uint8_t>::conn_t &conn) {
   metrics_->inc_msg("preprepare");
 
   // Discard message criteria
@@ -131,6 +133,7 @@ void Node::on_preprepare(PrePrepareMsg &&m,
   if (req_entry.has_preprepare && req_entry.digest != m.req_digest) {
     return;
   }
+  
   // The request is valid, start the timer for view change
   start_timer_if_not_running();
 
@@ -481,30 +484,4 @@ void Node::manage_timer() {
     }
   }
 }
-
-template <typename M>
-void Node::broadcast(const M &m) {
-  for (const auto &kv : peers_) {
-    if (kv.first == id_)
-      continue;
-    net_->send_msg(m, kv.second);
-  }
-}
-
-template <typename M> 
-void Node::send_to_replica(uint32_t replica_id, const M& m) {
-  auto it = peers_.find(replica_id);
-  if (it == peers_.end())
-    return;
-  net_->send_msg(m, it->second);
-}
-
-template <typename M> 
-void Node::send_to_client(uint32_t client_id, const M& m) {
-  auto it = clients_.find(client_id);
-  if (it == clients_.end())
-    return;
-  net_->send_msg(m, it->second);
-}
-
 } // namespace pbft

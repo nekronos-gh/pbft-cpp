@@ -129,9 +129,31 @@ PBFT_TESTING_ACCESS:
   // Helpers
   bool is_primary() const { return id_ == (view_ % n_); }
   uint32_t primary() const { return view_ % n_; }
-  template <typename M> void broadcast(const M &m);
-  template <typename M> void send_to_replica(uint32_t replica_id, const M& msg);
-  template <typename M> void send_to_client(uint32_t client_id, const M& msg);
+
+  template <typename M>
+  void broadcast(const M &m) {
+    for (const auto &kv : peers_) {
+      if (kv.first == id_)
+        continue;
+      net_->send_msg(m, kv.second);
+    }
+  }
+
+  template <typename M> 
+  void send_to_replica(uint32_t replica_id, const M& m) {
+    auto it = peers_.find(replica_id);
+    if (it == peers_.end())
+      return;
+    net_->send_msg(m, it->second);
+  }
+
+  template <typename M> 
+  void send_to_client(uint32_t client_id, const M& m) {
+    auto it = clients_.find(client_id);
+    if (it == clients_.end())
+      return;
+    net_->send_msg(m, it->second);
+  }
 
   // Service
   std::unique_ptr<ServiceInterface> service_;
