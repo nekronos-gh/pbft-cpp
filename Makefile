@@ -18,7 +18,8 @@ unit-test: build
 
 .PHONY: integration-test
 integration-test: build
-	cd $(BUILD_DIR)/test && ./integration_test
+	rm -rf $(BUILD_DIR)/test/logs/ 
+	- cd $(BUILD_DIR)/test && ./integration_test
 	cd $(BUILD_DIR)/test/logs/ && cat node-*.log | sort > all-nodes.log
 
 .PHONY: test

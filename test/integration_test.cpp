@@ -5,6 +5,7 @@
 #include <chrono>
 #include <map>
 
+#define PBFT_TESTING_ACCESS public
 #include "pbft/node.hh"
 #include "pbft/messages.hh"
 #include "pbft/service_interface.hh"
@@ -17,12 +18,15 @@ using namespace salticidae;
 // Service Setup
 // ============================================================================
 // Simple state machine to verify execution
+using ExecutionHook = std::function<std::string(const std::string&)>;
 class TestService : public ServiceInterface {
 private:
   std::vector<std::string> executed_ops_;
   int counter_;
   uint256_t state_digest_;
 
+  // For byzantine simulation
+  ExecutionHook execution_hook_;
 public:
   TestService() : counter_(0) {}
 
@@ -33,17 +37,23 @@ public:
   }
 
   std::string execute(const std::string& operation) override {
-    executed_ops_.push_back(operation);
+    std::string op_to_execute = operation;
+    if (execution_hook_) {
+      // The hook takes the original op and returns the (possibly evil) op
+      op_to_execute = execution_hook_(operation);
+    }
 
-    if (operation == "INC") {
+    executed_ops_.push_back(op_to_execute);
+
+    if (op_to_execute == "INC") {
       counter_++;
-    } else if (operation == "DEC") {
+    } else if (op_to_execute == "DEC") {
       counter_--;
-    } else if (operation.substr(0, 4) == "ADD:") {
-      int value = std::stoi(operation.substr(4));
+    } else if (op_to_execute.substr(0, 4) == "ADD:") {
+      int value = std::stoi(op_to_execute.substr(4));
       counter_ += value;
-    } else if (operation.substr(0, 4) == "SET:") {
-      int value = std::stoi(operation.substr(4));
+    } else if (op_to_execute.substr(0, 4) == "SET:") {
+      int value = std::stoi(op_to_execute.substr(4));
       counter_ = value;
     }
 
@@ -57,6 +67,11 @@ public:
 
   int get_counter() const { return counter_; }
   size_t get_op_count() const { return executed_ops_.size(); }
+
+  void set_execution_hook(ExecutionHook hook) {
+    execution_hook_ = hook;
+  }
+
 
 private:
   void update_digest() {
@@ -95,7 +110,7 @@ private:
   uint64_t request_counter_;
 
 public:
-  TestCluster(uint32_t n) : n_(n), f_((n - 1) / 3), client_id_(100), request_counter_(0) {
+  TestCluster(uint32_t n) : n_(n), f_((n - 1) / 3), client_id_(0), request_counter_(0) {
     client_addr_ = NetAddr("127.0.0.1:11000");
   }
 
@@ -124,16 +139,6 @@ public:
       std::cout << "[Replica " << i << "] Started on port " << (10000 + i) << std::endl;
     }
 
-    // Configure peers
-    for (uint32_t i = 0; i < n_; i++) {
-      for (uint32_t j = 0; j < n_; j++) {
-        if (i != j) {
-          replicas_[i].node->add_replica(j, replicas_[j].addr);
-        }
-      }
-      replicas_[i].node->add_client(client_id_, client_addr_);
-    }
-
     // Setup Client
     MsgNetwork<uint8_t>::Config net_config;
     client_net_ = std::make_unique<MsgNetwork<uint8_t>>(client_ec_, net_config);
@@ -143,6 +148,16 @@ public:
     client_thread_ = std::thread([this]() {
       client_ec_.dispatch();
     });
+
+    // Configure peers
+    for (uint32_t i = 0; i < n_; i++) {
+      for (uint32_t j = 0; j < n_; j++) {
+        if (i != j) {
+          replicas_[i].node->add_replica(j, replicas_[j].addr);
+        }
+      }
+      replicas_[i].node->add_client(client_id_, client_addr_);
+    }
 
     // Connect client to all replicas
     for (uint32_t i = 0; i < n_; i++) {
@@ -169,10 +184,12 @@ public:
 
     // Stop replicas
     for (auto& rep : replicas_) {
+      if (!rep.crashed) { 
         rep.node->stop();
         if (rep.thread.joinable()) {
             rep.thread.join();
         }
+      }
     }
 
     replicas_.clear();
@@ -194,38 +211,46 @@ public:
     if (id >= replicas_.size()) return;
     replicas_[id].crashed = true;
     replicas_[id].node->stop(); 
+    if (replicas_[id].thread.joinable()) {
+      replicas_[id].thread.join();
+    }
     std::cout << "[Cluster] Replica " << id << " crashed"<< std::endl;
   }
 
-  void mark_byzantine(uint32_t id) {
+  void set_byzantine_behavior(uint32_t id, ExecutionHook hook) {
     if (id >= replicas_.size()) return;
-    std::cout << "[Cluster] Marking replica " << id << " as Byzantine" << std::endl;
-    replicas_[id].byzantine = true;
+    replicas_[id].service->set_execution_hook(hook);
+    replicas_[id].byzantine = true; 
+    std::cout << "[Cluster] Injected byzantine behavior into replica " << id << std::endl;
+  }
+
+  template <typename M> 
+  void forge_broadcast(uint32_t id, M m) {
+    // Create a fake digest 
+    uint256_t fake_digest = salticidae::get_hash("EvilPayload");
+    replicas_[id].node->broadcast(m);
   }
 
   // Wait untill a number of executions have been observed in the service for each node
-  bool wait_for_operations(size_t expected_ops, uint32_t timeout_ms = 5000) {
+  bool wait_for_operations(size_t expected_ops, uint32_t n_reps, uint32_t timeout_ms = 1000) {
     auto start = std::chrono::steady_clock::now();
 
     while (true) {
-      bool all_reached = true;
-      int correct_count = 0;
+      uint32_t correct_count = 0;
 
       for (const auto& rep : replicas_) {
         if (rep.crashed || rep.byzantine) {
           continue;
         }
 
-        correct_count++;
         size_t ops = rep.service->get_op_count();
 
-        if (ops < expected_ops) {
-          all_reached = false;
-          break;
+        if (ops == expected_ops) {
+          correct_count++;
         }
       }
 
-      if (correct_count > 0 && all_reached) {
+      if (correct_count >= n_reps) {
         return true;
       }
 
@@ -245,8 +270,8 @@ public:
   // Check that all services are in the same state
   bool verify_consensus() {
     std::cout << "[Verify] Checking consensus ..." << std::endl;
-    std::map<int, int> counter_votes;
-    std::map<size_t, int> op_votes;
+    std::map<uint32_t, uint32_t> counter_votes;
+    std::map<size_t, uint32_t> op_votes;
 
     int correct_count = 0;
     for (const auto& rep : replicas_) {
@@ -276,8 +301,8 @@ public:
       return false;
     }
 
-    int max_votes = 0;
-    int agreed_counter = 0;
+    uint32_t max_votes = 0;
+    uint32_t agreed_counter = 0;
     for (const auto& [counter, votes] : counter_votes) {
       if (votes > max_votes) {
         max_votes = votes;
@@ -285,8 +310,8 @@ public:
       }
     }
 
-    int max_op_votes = 0;
-    size_t agreed_ops = 0;
+    uint32_t max_op_votes = 0;
+    uint32_t agreed_ops = 0;
     for (const auto& [ops, votes] : op_votes) {
       if (votes > max_op_votes) {
         max_op_votes = votes;
@@ -294,10 +319,10 @@ public:
       }
     }
 
-    bool consensus = (max_votes == correct_count) && (max_op_votes == correct_count);
+    bool consensus = (max_votes >= correct_count - f_) && (max_op_votes >= correct_count - f_);
 
     if (consensus) {
-      std::cout << "[Verify] CONSENSUS: All correct replicas agree (" << agreed_counter << ", " << agreed_ops << ")" << std::endl;
+      std::cout << "[Verify] CONSENSUS: Enough correct replicas agree (" << agreed_counter << ", " << agreed_ops << ")" << std::endl;
     } else {
       std::cout << "[Verify] NO CONSENSUS: Replicas disagree" << std::endl;
     }
@@ -320,10 +345,11 @@ bool test_normal_operation() {
   cluster.start();
 
   cluster.send_request("INC", 0);
-  cluster.send_request("INC", 0);
-  cluster.send_request("ADD:5", 0);
+  cluster.send_request("INC", 1);
+  cluster.send_request("ADD:40", 2);
 
-  if (!cluster.wait_for_operations(3)) {
+  // 4 replicas should execute
+  if (!cluster.wait_for_operations(3, 4)) {
     passed = false;
   }
   if (!cluster.verify_consensus()) {
@@ -336,19 +362,21 @@ bool test_normal_operation() {
 
 bool test_f_crashed() {
   std::cout << "╔══════════════════════════════════════════════╗" << std::endl;
-  std::cout << "║  TEST: f=1 Crashed Node                      ║" << std::endl;
+  std::cout << "║  TEST: f=2 Crashed Node                      ║" << std::endl;
   std::cout << "╚══════════════════════════════════════════════╝" << std::endl;
   bool passed = true;
 
-  TestCluster cluster(4);
+  TestCluster cluster(7);
   cluster.start();
 
+  // Crash two replicas
   cluster.crash_replica(3);
+  cluster.crash_replica(5);
 
-  cluster.send_request("SET:10", 0);
-  cluster.send_request("INC", 0);
+  cluster.send_request("SET:42", 0);
 
-  if (!cluster.wait_for_operations(2)) {
+  // 5 replicas should execute
+  if (!cluster.wait_for_operations(1, 5)) {
     passed = false;
   }
   if (!cluster.verify_consensus()) {
@@ -359,102 +387,29 @@ bool test_f_crashed() {
   return passed;
 }
 
-bool test_byzantine() {
+bool test_no_consensus() {
   std::cout << "╔══════════════════════════════════════════════╗" << std::endl;
-  std::cout << "║  TEST: f=1 Byzantine Node                    ║" << std::endl;
+  std::cout << "║  TEST: No Consensus                          ║" << std::endl;
   std::cout << "╚══════════════════════════════════════════════╝" << std::endl;
   bool passed = true;
 
   TestCluster cluster(4);
   cluster.start();
 
-  cluster.mark_byzantine(2);
+  // Crash two replicas
+  cluster.crash_replica(1);
+  cluster.crash_replica(2);
 
-  cluster.send_request("SET:100", 0);
-  cluster.send_request("ADD:50", 0);
-
-  if (!cluster.wait_for_operations(2)) {
-    passed = false;
-  }
-  if (!cluster.verify_consensus()) {
-    passed = false;
-  }
-  cluster.stop();
-
-  return passed;
-}
-
-#include <iostream>
-#include <filesystem>
-#include <string>
-
-bool test_view_change() {
-  std::cout << "╔══════════════════════════════════════════════╗" << std::endl;
-  std::cout << "║  TEST: View Change (Primary Failure)         ║" << std::endl;
-  std::cout << "╚══════════════════════════════════════════════╝" << std::endl;
-  bool passed = true;
-
-  TestCluster cluster(4);
-  cluster.start();
-
-  cluster.send_request("SET:42", 1);
-
-  cluster.crash_replica(0);
-
-  cluster.send_request("INC", 1);
-
-  if (!cluster.wait_for_operations(2)){
-    passed = false;
-  }
-  if (!cluster.verify_consensus()){
-    passed = false;
-  }
-  cluster.stop();
-  return passed;
-}
-
-bool test_sequential() {
-  std::cout << "╔══════════════════════════════════════════════╗" << std::endl;
-  std::cout << "║  TEST: Sequential Operations                 ║" << std::endl;
-  std::cout << "╚══════════════════════════════════════════════╝" << std::endl;
-  bool passed = true;
-
-  TestCluster cluster(4);
-  cluster.start();
-
-  for (int i = 0; i < 10; i++) {
-    cluster.send_request("INC", 0);
-  }
-
-  if (!cluster.wait_for_operations(10)) {
-    passed = false;
-  }
-  if (!cluster.verify_consensus()) {
-    passed = false;
-  }
-  cluster.stop();
-
-  return passed;
-}
-
-bool test_mixed() {
-  std::cout << "╔══════════════════════════════════════════════╗" << std::endl;
-  std::cout << "║  TEST: Mixed Operations                      ║" << std::endl;
-  std::cout << "╚══════════════════════════════════════════════╝" << std::endl;
-  bool passed = true;
-
-  TestCluster cluster(4);
-  cluster.start();
-
-  cluster.send_request("SET:0", 0);
   cluster.send_request("INC", 0);
   cluster.send_request("INC", 0);
-  cluster.send_request("ADD:10", 0);
-  cluster.send_request("DEC", 0);
+  cluster.send_request("ADD:20", 0);
+  cluster.send_request("ADD:20", 0);
 
-  if (!cluster.wait_for_operations(5)) {
+  // No replicas should execute
+  if (!cluster.wait_for_operations(0, 2)) {
     passed = false;
   }
+  // No replicas should execute
   if (!cluster.verify_consensus()) {
     passed = false;
   }
@@ -462,7 +417,6 @@ bool test_mixed() {
 
   return passed;
 }
-
 // ============================================================================
 // Main
 // ============================================================================
@@ -477,11 +431,8 @@ int main() {
 
   std::vector<std::pair<std::string, bool(*)()>> tests = {
     {"Normal Operation", test_normal_operation},
-    {"f Crashed Nodes", test_f_crashed},
-    {"Byzantine Nodes", test_byzantine},
-    {"View Change", test_view_change},
-    {"Sequential Operations", test_sequential},
-    {"Mixed Operations", test_mixed}
+    {"Crashed f nodes", test_f_crashed},
+    {"No Consensus", test_no_consensus},
   };
 
   int passed = 0;

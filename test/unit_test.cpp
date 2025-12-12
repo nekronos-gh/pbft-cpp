@@ -713,7 +713,7 @@ TEST_F(PBFTNodeTest, OnNewViewUpdatesStateAndProcessesOset) {
 
   // Create Valid V set (3 VCs)
   std::vector<ViewChangeMsg> V;
-  for(int i = 0; i < 2 * MAX_FAULTY + 1; i++) {
+  for(uint64_t i = 0; i < 2 * MAX_FAULTY + 1; i++) {
     V.emplace_back(new_view, 0, i, std::vector<CheckpointMsg>{}, std::vector<PrepareProof>{});
   }
 

@@ -1,3 +1,5 @@
+#include <arpa/inet.h>
+
 #include "pbft/node.hh"
 #include "pbft/metrics.hh"
 
@@ -10,6 +12,15 @@ using salticidae::MsgNetwork;
 using salticidae::NetAddr;
 using salticidae::_1;
 using salticidae::_2;
+
+#define NETADDR_STR(addr) ([&]{ \
+    char _ipbuf[INET_ADDRSTRLEN]; \
+    uint32_t _ip = htonl((addr).ip); \
+    inet_ntop(AF_INET, &_ip, _ipbuf, sizeof(_ipbuf)); \
+    static thread_local char _outbuf[64]; \
+    snprintf(_outbuf, sizeof(_outbuf), "%s:%u", _ipbuf, (unsigned)((addr).port)); \
+    return _outbuf; \
+}())
 
 namespace pbft {
 
@@ -39,12 +50,21 @@ Node::Node(uint32_t replica_id, uint32_t num_replicas,
   register_handlers();
 }
 
+Node::~Node() {
+  if (logger_) {
+    logger_->flush();
+    spdlog::drop(logger_->name());
+  }
+}
+
 void Node::add_replica(uint32_t id, const NetAddr &addr) {
   peers_[id] = net_->connect_sync(addr);
+  logger_->info("CONNECTED REPLICA id={} addr={}", id, NETADDR_STR(addr));
 }
 
 void Node::add_client(uint32_t id, const NetAddr &addr) {
   clients_[id] = net_->connect_sync(addr);
+  logger_->info("CONNECTED CLIENT id={} ip={} port={}", id, NETADDR_STR(addr));
 }
 
 void Node::start(const NetAddr &listen_addr) {
