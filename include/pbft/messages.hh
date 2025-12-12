@@ -175,9 +175,9 @@ namespace pbft {
   // Used for P set in ViewChange
   // Represents a request that prepared at a specific replica
   struct PrepareProof {
+    uint32_t view;
     uint64_t seq_num;
     uint256_t digest;
-    uint32_t view;
     std::set<uint32_t> prepared_replicas; 
 
     // Empty constructor for serialization

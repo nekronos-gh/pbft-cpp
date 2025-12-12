@@ -1,11 +1,10 @@
 #include "pbft/node.hh"
 #include "pbft/metrics.hh"
 
-#include "salticidae/msg.h"
-#include "salticidae/event.h"
-#include "salticidae/network.h"
 #include "salticidae/stream.h"
 #include "salticidae/conn.h"
+
+#include "spdlog/sinks/basic_file_sink.h"
 
 using salticidae::MsgNetwork;
 using salticidae::NetAddr;
@@ -16,9 +15,10 @@ namespace pbft {
 
 Node::Node(uint32_t replica_id, uint32_t num_replicas,
            std::unique_ptr<ServiceInterface> service)
-  : id_(replica_id), n_(num_replicas), service_(std::move(service)),
+  : id_(replica_id), n_(num_replicas), 
   net_(new MsgNetwork<uint8_t>(ec_, MsgNetwork<uint8_t>::Config())),
-  view_change_timer_(ec_, [this](salticidae::TimerEvent &) { start_view_change(); }) {
+  view_change_timer_(ec_, [this](salticidae::TimerEvent &) { start_view_change(); }),
+  service_(std::move(service)) {
 
   f_ = (n_ - 1) / 3;
   service_->initialize();
@@ -26,6 +26,15 @@ Node::Node(uint32_t replica_id, uint32_t num_replicas,
   metrics_ = std::make_unique<Metrics>(metrics_addr); 
 
   metrics_->set_view(view_);
+
+  // Initialize logger
+  logger_ = spdlog::basic_logger_mt(
+    fmt::format("node-{}", id_),            // logger name
+    fmt::format("logs/node-{}.log", id_)    // file path
+  );  
+
+  logger_->set_level(spdlog::level::info);
+  logger_->set_pattern("[%Y-%m-%dT%H:%M:%S.%e] [node=%n] [%^%l%$] %v");
 
   register_handlers();
 }
@@ -40,7 +49,7 @@ void Node::add_client(uint32_t id, const NetAddr &addr) {
 
 void Node::start(const NetAddr &listen_addr) {
   net_->start();
-  net_->listen(listen_addr);
+  net_->listen(listen_addr);    
 }
 
 void Node::stop() { 
@@ -56,7 +65,10 @@ void Node::stop() {
   }
 }
 
-void Node::run() { ec_.dispatch(); }
+void Node::run() { 
+  logger_->info("RUNNING");
+  ec_.dispatch(); 
+}
 
 void Node::register_handlers() {
   net_->reg_handler(salticidae::generic_bind(&Node::on_request, this, _1, _2));
@@ -75,6 +87,8 @@ void Node::register_handlers() {
 void Node::on_request(RequestMsg &&m, 
                       const MsgNetwork<uint8_t>::conn_t &) {
   metrics_->inc_msg("request");
+  logger_->info("MSG_RECV REQUEST view={} op={} from={} ts={}",
+                view_, m.operation, m.client_id, m.timestamp);
   if (view_changing_) return;
 
   // Requests are only processed by primary
@@ -93,6 +107,9 @@ void Node::on_request(RequestMsg &&m,
     // Verify sequence within watermarks
     if (seq_num_ < h_ || seq_num_ >= H_) return;
     seq_num_++;
+
+    logger_->info("REQUEST ACCEPTED view={} op={} seq={}",
+                  view_, m.operation, seq_num_);
 
     auto &request = reqlog_[seq_num_]; // Create log entry
     // Begin PRE_PREPARE phase
@@ -119,8 +136,10 @@ void Node::on_request(RequestMsg &&m,
 // PRE-PREPARE
 // --------------------------------------------------------------------------
 void Node::on_preprepare(PrePrepareMsg &&m,
-                         const MsgNetwork<uint8_t>::conn_t &conn) {
+                         const MsgNetwork<uint8_t>::conn_t &) {
   metrics_->inc_msg("preprepare");
+  logger_->info("MSG_RECV PREPREPARE view={} op={} seq={} hash={}",
+                m.view, m.req.operation, m.seq_num, m.req_digest.to_hex().substr(0, 5));
 
   // Discard message criteria
   if (view_changing_) return;
@@ -133,7 +152,7 @@ void Node::on_preprepare(PrePrepareMsg &&m,
   if (req_entry.has_preprepare && req_entry.digest != m.req_digest) {
     return;
   }
-  
+
   // The request is valid, start the timer for view change
   start_timer_if_not_running();
 
@@ -160,6 +179,8 @@ void Node::on_preprepare(PrePrepareMsg &&m,
 void Node::on_prepare(PrepareMsg &&m, 
                       const MsgNetwork<uint8_t>::conn_t &) {
   metrics_->inc_msg("prepare");
+  logger_->info("MSG_RECV PREPARE view={} seq={} from={} hash={}",
+                m.view, m.seq_num, m.replica_id, m.req_digest.to_hex().substr(0, 5));
 
   // Discard message criteria
   if (view_changing_) return;
@@ -181,6 +202,9 @@ void Node::try_prepare(ReqLogEntry &req_entry) {
   if (req_entry.stage == ReqStage::PRE_PREPARED && 
     req_entry.has_preprepare && 
     req_entry.prepares.size() >= 2 * f_) { 
+    logger_->info("LOCALLY PREPARED view={} op={} seq={} hash={}",
+                  req_entry.view, req_entry.req.operation, req_entry.seq, 
+                  req_entry.digest.to_hex().substr(0, 5));
 
     req_entry.stage = ReqStage::PREPARED;
 
@@ -197,6 +221,8 @@ void Node::try_prepare(ReqLogEntry &req_entry) {
 // --------------------------------------------------------------------------
 void Node::on_commit(CommitMsg &&m, const MsgNetwork<uint8_t>::conn_t &) {
   metrics_->inc_msg("commit");
+  logger_->info("MSG_RECV COMMIT view={} seq={} from={} hash={}",
+                m.view, m.seq_num, m.replica_id, m.req_digest.to_hex().substr(0, 5));
 
   // Discard message criteria
   if (view_changing_) return;
@@ -211,11 +237,14 @@ void Node::on_commit(CommitMsg &&m, const MsgNetwork<uint8_t>::conn_t &) {
   try_commit(req_entry);
 }
 
-void Node::try_commit(ReqLogEntry &entry) {
+void Node::try_commit(ReqLogEntry &req_entry) {
   // Prepared AND 2f+1 commits (including self)
-  if (entry.stage == ReqStage::PREPARED && 
-    entry.commits.size() >= 2 * f_ + 1) {
-    entry.stage = ReqStage::COMMITTED;
+  if (req_entry.stage == ReqStage::PREPARED && 
+    req_entry.commits.size() >= 2 * f_ + 1) {
+    logger_->info("LOCALLY COMMITTED view={} op={} seq={} hash={}",
+                  req_entry.view, req_entry.req.operation, req_entry.seq, 
+                  req_entry.digest.to_hex().substr(0, 5));
+    req_entry.stage = ReqStage::COMMITTED;
     try_execute();
   }
 }
@@ -248,10 +277,12 @@ void Node::try_execute() {
     last_replies_[req_entry.req.client_id] = cache_reply;
 
     last_exec_++;
+    logger_->info("LOCALLY EXECUTED view={} op={} seq={} hash={}",
+                  req_entry.view, req_entry.req.operation, req_entry.seq, 
+                  req_entry.digest.to_hex().substr(0, 5));
     
     // Stop timer if no longer waiting, restart if still waiting for other requests
     manage_timer();
-    
     if (last_exec_ % K == 0) make_checkpoint();
   }
 }
@@ -264,10 +295,14 @@ void Node::make_checkpoint() {
   uint256_t digest = service_->get_checkpoint_digest();
   broadcast(CheckpointMsg(last_exec_, digest, id_));
   checkpoints_[last_exec_].votes[digest].insert(id_);
+  logger_->info("START CHECKPOINT state={}",
+                digest.to_hex().substr(0, 5));
 }
 
 void Node::on_checkpoint(CheckpointMsg &&m,
                          const MsgNetwork<uint8_t>::conn_t &) {
+  logger_->info("MSG_RECV CHECKPOINT view={} seq={} from={} state={}",
+                view_, m.seq_num, m.replica_id, m.state_digest.to_hex().substr(0, 5));
   if (m.seq_num < h_) return; // Old checkpoint
   auto &cp_data = checkpoints_[m.seq_num];
   // Save vote for the checkpoint
@@ -275,6 +310,8 @@ void Node::on_checkpoint(CheckpointMsg &&m,
 
   // Check stability: 2f+1 votes
   if (!cp_data.stable && cp_data.votes[m.state_digest].size() >= 2 * f_ + 1) {
+    logger_->info("CHECKPOINT AGREED view={} seq={} state={}",
+                  view_, m.seq_num, m.state_digest.to_hex().substr(0, 5));
     cp_data.stable = true;
     last_stable_digest_ = m.state_digest;
     advance_watermarks(m.seq_num);
@@ -314,6 +351,8 @@ void Node::start_view_change() {
   view_changing_ = true;
   uint64_t next_view = ++view_;
   view_change_timeout_count_++;
+    
+  logger_->info("VIEW CHANGE new_view={}", next_view);
   
   // Stop the timer when starting view change
   stop_timer();
@@ -343,6 +382,10 @@ void Node::start_view_change() {
 }
 
 void Node::on_viewchange(ViewChangeMsg &&m, const MsgNetwork<uint8_t>::conn_t &) {
+  logger_->info("MSG_RECV VIEW_CHANGE view={} new_view={} checkpoint={} C={} P={} from={}",
+                view_, m.next_view, m.last_stable_checkpoint, 
+                m.checkpoint_proof.size(), m.prepared_proofs.size(),
+                m.replica_id);
   // Ignore previous views
   if (m.next_view < view_) return;
   // If not the primary for v + 1, ignore
@@ -409,6 +452,8 @@ void Node::on_viewchange(ViewChangeMsg &&m, const MsgNetwork<uint8_t>::conn_t &)
 }
 
 void Node::on_newview(NewViewMsg &&m, const salticidae::MsgNetwork<uint8_t>::conn_t &) {
+  logger_->info("MSG_RECV NEW_VIEW view={} new_view={} V={} O={}",
+                view_, m.next_view, m.view_changes.size(), m.pre_prepares.size());
   if (!view_changing_ || m.next_view <= view_) {
     return; // Ignore: either not waiting, or message is stale
   }

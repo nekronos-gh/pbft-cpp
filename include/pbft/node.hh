@@ -1,13 +1,16 @@
 #pragma once
+
 #ifndef PBFT_TESTING_ACCESS
   #define PBFT_TESTING_ACCESS private
 #endif
+
 #include "pbft/messages.hh"
 #include "pbft/metrics.hh"
 #include "pbft/service_interface.hh"
-#include "salticidae/crypto.h"
-#include "salticidae/event.h"
+
 #include "salticidae/network.h"
+
+#include "spdlog/spdlog.h"
 
 #include <chrono>
 #include <memory>
@@ -159,6 +162,8 @@ PBFT_TESTING_ACCESS:
   std::unique_ptr<ServiceInterface> service_;
   // Metrics
   std::unique_ptr<Metrics> metrics_;
+  // Logger
+  std::shared_ptr<spdlog::logger> logger_;
 };
 
 } // namespace pbft
