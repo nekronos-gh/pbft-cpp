@@ -25,14 +25,27 @@ using salticidae::_2;
 namespace pbft {
 
 Node::Node(uint32_t replica_id, uint32_t num_replicas,
-           std::unique_ptr<ServiceInterface> service)
+           std::unique_ptr<ServiceInterface> service,
+           std::optional<NodeTLSConfig> tls_config)
   : id_(replica_id), n_(num_replicas), 
-  net_(new MsgNetwork<uint8_t>(ec_, MsgNetwork<uint8_t>::Config())),
   view_change_timer_(ec_, [this](salticidae::TimerEvent &) { start_view_change(); }),
   service_(std::move(service)) {
 
   f_ = (n_ - 1) / 3;
+
+  // Set TLS in the network
+  MsgNetwork<uint8_t>::Config config;
+  if (tls_config.has_value()) {
+        config.enable_tls(true)
+              .tls_cert_file(tls_config->cert_file)
+              .tls_key_file(tls_config->key_file);
+    } else {
+        config.enable_tls(false);
+    }
+  net_ = std::make_unique<MsgNetwork<uint8_t>>(ec_, config);
+
   service_->initialize();
+
   std::string metrics_addr = "0.0.0.0:" + std::to_string(9460 + id_);
   metrics_ = std::make_unique<Metrics>(metrics_addr); 
 
@@ -45,7 +58,7 @@ Node::Node(uint32_t replica_id, uint32_t num_replicas,
   );  
 
   logger_->set_level(spdlog::level::info);
-  logger_->set_pattern("[%Y-%m-%dT%H:%M:%S.%e] [node=%n] [%^%l%$] %v");
+  logger_->set_pattern("[%Y-%m-%dT%H:%M:%S.%e] [%n] [%^%l%$] %v");
 
   register_handlers();
 }
@@ -156,7 +169,7 @@ void Node::on_request(RequestMsg &&m,
 // PRE-PREPARE
 // --------------------------------------------------------------------------
 void Node::on_preprepare(PrePrepareMsg &&m,
-                         const MsgNetwork<uint8_t>::conn_t &) {
+                         const MsgNetwork<uint8_t>::conn_t &conn) {
   metrics_->inc_msg("preprepare");
   logger_->info("MSG_RECV PREPREPARE view={} op={} seq={} hash={}",
                 m.view, m.req.operation, m.seq_num, m.req_digest.to_hex().substr(0, 5));
@@ -172,6 +185,7 @@ void Node::on_preprepare(PrePrepareMsg &&m,
   if (req_entry.has_preprepare && req_entry.digest != m.req_digest) {
     return;
   }
+  logger_->info("PREPREPARE ACCEPTED h1={} h2={}", req_entry.digest.to_hex().substr(0,5), m.req_digest.to_hex().substr(0,5));
 
   // The request is valid, start the timer for view change
   start_timer_if_not_running();
@@ -210,8 +224,10 @@ void Node::on_prepare(PrepareMsg &&m,
   auto &req_entry = reqlog_[m.seq_num];
   // Buffer the prepare even if we haven't received PrePrepare yet (Out-of-Order handling)
   // But we only count it if digests match
-  if (req_entry.has_preprepare && req_entry.digest != m.req_digest)
+  if (req_entry.has_preprepare && req_entry.digest != m.req_digest) {
     return;
+  }
+  logger_->info("PREPARE ACCEPTED h1={} h2={}", req_entry.digest.to_hex().substr(0,5), m.req_digest.to_hex().substr(0,5));
 
   req_entry.prepares.insert(m.replica_id);
   try_prepare(req_entry);

@@ -20,10 +20,16 @@
 
 namespace pbft {
 
+struct NodeTLSConfig {
+    std::string cert_file;
+    std::string key_file;
+};
+
 class Node {
 public:
   Node(uint32_t replica_id, uint32_t num_replicas,
-       std::unique_ptr<ServiceInterface> service);
+       std::unique_ptr<ServiceInterface> service,
+       std::optional<NodeTLSConfig> tls_config = std::nullopt);
   ~Node();
 
   void add_replica(uint32_t id, const salticidae::NetAddr &addr);
