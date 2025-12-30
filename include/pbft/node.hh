@@ -48,6 +48,7 @@ PBFT_TESTING_ACCESS:
   salticidae::EventContext ec_;
   std::unique_ptr<salticidae::MsgNetwork<uint8_t>> net_;
   std::unordered_map<uint32_t, salticidae::MsgNetwork<uint8_t>::conn_t> peers_;
+  std::unordered_map<salticidae::MsgNetwork<uint8_t>::Conn *, uint32_t> conn_to_peer_;
   std::unordered_map<uint32_t, salticidae::MsgNetwork<uint8_t>::conn_t> clients_;
 
   // State (Sane defaults)
@@ -86,10 +87,15 @@ PBFT_TESTING_ACCESS:
 
   // Protocol Handlers
   void register_handlers();
+  void on_handshake(HandshakeMsg &&m,
+                  const salticidae::MsgNetwork<uint8_t>::conn_t &);
   void on_request(RequestMsg &&m,
                   const salticidae::MsgNetwork<uint8_t>::conn_t &);
   void on_preprepare(PrePrepareMsg &&m,
                      const salticidae::MsgNetwork<uint8_t>::conn_t &);
+  void on_preprepare_impl(PrePrepareMsg &&m,
+                     const salticidae::MsgNetwork<uint8_t>::conn_t &,
+                     bool from_self = false);
   void on_prepare(PrepareMsg &&m,
                   const salticidae::MsgNetwork<uint8_t>::conn_t &);
   void on_commit(CommitMsg &&m,
@@ -138,6 +144,12 @@ PBFT_TESTING_ACCESS:
 
   // Helpers
   bool is_primary() const { return id_ == (view_ % n_); }
+  bool comes_from_primary(const salticidae::MsgNetwork<uint8_t>::conn_t &conn) const { 
+    auto it = conn_to_peer_.find(conn.get());
+    if (it == conn_to_peer_.end()) return false;
+    if (it->second == primary()) return true;
+    return false;
+  }
   uint32_t primary() const { return view_ % n_; }
 
   template <typename M>
@@ -145,7 +157,10 @@ PBFT_TESTING_ACCESS:
     for (const auto &kv : peers_) {
       if (kv.first == id_)
         continue;
-      net_->send_msg(m, kv.second);
+      auto &conn = kv.second;
+      if (conn && !conn->is_terminated()) {
+          net_->send_msg(m, conn);
+      }
     }
   }
 
@@ -154,7 +169,10 @@ PBFT_TESTING_ACCESS:
     auto it = peers_.find(replica_id);
     if (it == peers_.end())
       return;
-    net_->send_msg(m, it->second);
+    auto &conn = it->second;
+    if (conn && !conn->is_terminated()) {
+        net_->send_msg(m, conn);
+    }
   }
 
   template <typename M> 
@@ -162,7 +180,10 @@ PBFT_TESTING_ACCESS:
     auto it = clients_.find(client_id);
     if (it == clients_.end())
       return;
-    net_->send_msg(m, it->second);
+    auto &conn = it->second;
+    if (conn && !conn->is_terminated()) {
+        net_->send_msg(m, conn);
+    }
   }
 
   // Service

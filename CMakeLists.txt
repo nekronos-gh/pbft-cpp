@@ -6,6 +6,7 @@ project(PBFT LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_FLAGS_DEBUG "-g -O0 -fno-inline" CACHE STRING "" FORCE)
 
 add_compile_options(
     -Wall

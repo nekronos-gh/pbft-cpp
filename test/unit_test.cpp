@@ -31,6 +31,8 @@ protected:
     EXPECT_CALL(*service, initialize()).Times(1).WillOnce(Return());
     // Create 4 replicas (f=1)
     node_ = std::make_unique<Node>(0, NUM_REPLICAS, std::move(service_ptr));
+    // Add the connections as trusted
+    node_->conn_to_peer_[dummy_conn.get()] = 0;
   }
 
   std::unique_ptr<Node> node_;
@@ -727,6 +729,8 @@ TEST_F(PBFTNodeTest, OnNewViewUpdatesStateAndProcessesOset) {
 
   NewViewMsg nv(new_view, V, O);
 
+  // Add as trusted primary
+  node_->conn_to_peer_[dummy_conn.get()] = 3;
   node_->on_newview(std::move(nv), dummy_conn);
 
   // State Updated

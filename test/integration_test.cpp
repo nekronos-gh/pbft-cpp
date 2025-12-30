@@ -389,7 +389,7 @@ bool test_f_crashed() {
 
 bool test_no_consensus() {
   std::cout << "╔══════════════════════════════════════════════╗" << std::endl;
-  std::cout << "║  TEST: No Consensus                          ║" << std::endl;
+  std::cout << "║  TEST: No Consensus (> f)                    ║" << std::endl;
   std::cout << "╚══════════════════════════════════════════════╝" << std::endl;
   bool passed = true;
 
@@ -417,6 +417,56 @@ bool test_no_consensus() {
 
   return passed;
 }
+
+bool test_byzantine() {
+  std::cout << "╔══════════════════════════════════════════════╗" << std::endl;
+  std::cout << "║  TEST: Byzantine Execution                   ║" << std::endl;
+  std::cout << "╚══════════════════════════════════════════════╝" << std::endl;
+  bool passed = true;
+
+  TestCluster cluster(4);
+  cluster.start();
+  uint64_t byzanite_node = 1;
+
+  // We want Replica 2 to turn any "SET" command into a "SET:666" command.
+  cluster.set_byzantine_behavior(byzanite_node, 
+  [](const std::string& original_op) -> std::string {
+      if (original_op.substr(0, 4) == "SET:") {
+          // Modify on rutime
+          return "SET:666";
+      }
+      return original_op;
+  });
+
+  cluster.send_request("SET:42", 0);
+
+  // Fun begins: mess up the cluster
+  // Send a valid PrePrepare to everybody
+  auto forged_request = RequestMsg("SET:666", 0, 0);
+  auto fake_digest = salticidae::get_hash("SET:666");
+  uint64_t view = 0;
+  uint64_t seq_num = 1;
+  cluster.forge_broadcast(byzanite_node, 
+                          PrePrepareMsg(view, seq_num, fake_digest, forged_request));
+  // Send a valid Prepare message
+  cluster.forge_broadcast(byzanite_node, 
+                          PrepareMsg(view, seq_num, fake_digest, byzanite_node));
+
+  // Send a valid Commit message and execute
+  cluster.forge_broadcast(byzanite_node, 
+                          CommitMsg(view, seq_num, fake_digest, byzanite_node));
+
+  if (!cluster.wait_for_operations(1, 3)) {
+    passed = false;
+  }
+  if (!cluster.verify_consensus()) {
+     passed = false;
+  }
+  
+  cluster.stop();
+  return passed;
+}
+
 // ============================================================================
 // Main
 // ============================================================================
@@ -431,8 +481,10 @@ int main() {
 
   std::vector<std::pair<std::string, bool(*)()>> tests = {
     {"Normal Operation", test_normal_operation},
-    {"Crashed f nodes", test_f_crashed},
+    {"Crashed f Nodes", test_f_crashed},
     {"No Consensus", test_no_consensus},
+    {"Byzantine Execution", test_byzantine},
+    //{"Force View Change", test_view_change},
   };
 
   int passed = 0;

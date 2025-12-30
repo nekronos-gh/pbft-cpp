@@ -9,6 +9,7 @@
 #include "spdlog/sinks/basic_file_sink.h"
 
 using salticidae::MsgNetwork;
+using salticidae::ConnPool;
 using salticidae::NetAddr;
 using salticidae::_1;
 using salticidae::_2;
@@ -104,6 +105,7 @@ void Node::run() {
 }
 
 void Node::register_handlers() {
+  net_->reg_handler(salticidae::generic_bind(&Node::on_handshake, this, _1, _2));
   net_->reg_handler(salticidae::generic_bind(&Node::on_request, this, _1, _2));
   net_->reg_handler(salticidae::generic_bind(&Node::on_preprepare, this, _1, _2));
   net_->reg_handler(salticidae::generic_bind(&Node::on_prepare, this, _1, _2));
@@ -111,6 +113,21 @@ void Node::register_handlers() {
   net_->reg_handler(salticidae::generic_bind(&Node::on_checkpoint, this, _1, _2));
   net_->reg_handler(salticidae::generic_bind(&Node::on_viewchange, this, _1, _2));
   net_->reg_handler(salticidae::generic_bind(&Node::on_newview, this, _1, _2));
+
+  net_->reg_conn_handler([this](const salticidae::ConnPool::conn_t &_conn, bool connected) {
+        auto conn = salticidae::static_pointer_cast<salticidae::MsgNetwork<uint8_t>::Conn>(_conn);
+        if (connected) {
+            net_->send_msg(HandshakeMsg(id_), conn);
+        }
+        return true;
+    });
+}
+
+// Satblish which connections belong to who
+void Node::on_handshake(HandshakeMsg &&m, 
+                    const salticidae::MsgNetwork<uint8_t>::conn_t &conn) {
+    conn_to_peer_[conn.get()] = m.id;
+    logger_->info("HANDSHAKE replica={}", m.id);
 }
 
 
@@ -125,7 +142,7 @@ void Node::on_request(RequestMsg &&m,
   if (view_changing_) return;
 
   // Requests are only processed by primary
-  if (is_primary()) {
+  if (this->is_primary()) {
     // Check for duplicate request by (client_id, timestamp)
     auto last_reply_it = last_replies_.find(m.client_id);
     if (last_reply_it != last_replies_.end()) {
@@ -160,7 +177,6 @@ void Node::on_request(RequestMsg &&m,
     metrics_->set_inflight(reqlog_.size());
   } else {
     // Otherwise, send to primary
-    
     send_to_replica(primary(), RequestMsg(m.operation, m.timestamp, m.client_id));
   }
 }
@@ -170,11 +186,17 @@ void Node::on_request(RequestMsg &&m,
 // --------------------------------------------------------------------------
 void Node::on_preprepare(PrePrepareMsg &&m,
                          const MsgNetwork<uint8_t>::conn_t &conn) {
+  on_preprepare_impl(std::move(m), conn, false);
+}
+void Node::on_preprepare_impl(PrePrepareMsg &&m,
+                         const MsgNetwork<uint8_t>::conn_t &conn,
+                         bool from_self) {
   metrics_->inc_msg("preprepare");
   logger_->info("MSG_RECV PREPREPARE view={} op={} seq={} hash={}",
                 m.view, m.req.operation, m.seq_num, m.req_digest.to_hex().substr(0, 5));
 
   // Discard message criteria
+  if (!from_self && !comes_from_primary(conn)) return;
   if (view_changing_) return;
   if (m.view != view_) return;
   if (m.seq_num < h_ || m.seq_num > H_) return;
@@ -487,9 +509,11 @@ void Node::on_viewchange(ViewChangeMsg &&m, const MsgNetwork<uint8_t>::conn_t &)
   }
 }
 
-void Node::on_newview(NewViewMsg &&m, const salticidae::MsgNetwork<uint8_t>::conn_t &) {
+void Node::on_newview(NewViewMsg &&m, const MsgNetwork<uint8_t>::conn_t &conn) {
   logger_->info("MSG_RECV NEW_VIEW view={} new_view={} V={} O={}",
                 view_, m.next_view, m.view_changes.size(), m.pre_prepares.size());
+  // Only accept messages from primary
+  if (!comes_from_primary(conn)) return;
   if (!view_changing_ || m.next_view <= view_) {
     return; // Ignore: either not waiting, or message is stale
   }
@@ -519,7 +543,7 @@ void Node::on_newview(NewViewMsg &&m, const salticidae::MsgNetwork<uint8_t>::con
 
   // Process PrePrepares in O set
   for (auto &pp : m.pre_prepares) {
-    on_preprepare(std::move(pp), salticidae::MsgNetwork<uint8_t>::conn_t{});
+    on_preprepare_impl(std::move(pp), std::move(conn), true);
   }
   
   // Stop if no pending requests
