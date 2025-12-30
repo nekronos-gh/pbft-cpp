@@ -9,7 +9,6 @@
 #include "spdlog/sinks/basic_file_sink.h"
 
 using salticidae::MsgNetwork;
-using salticidae::ConnPool;
 using salticidae::NetAddr;
 using salticidae::_1;
 using salticidae::_2;
@@ -25,10 +24,11 @@ using salticidae::_2;
 
 namespace pbft {
 
-Node::Node(uint32_t replica_id, uint32_t num_replicas,
+Node::Node(uint32_t replica_id, uint32_t num_replicas, 
            std::unique_ptr<ServiceInterface> service,
-           std::optional<NodeTLSConfig> tls_config)
-  : id_(replica_id), n_(num_replicas), 
+           std::optional<NodeTLSConfig> tls_config,
+           double vc_timeout)
+  : id_(replica_id), n_(num_replicas), vc_timeout_(vc_timeout),  
   view_change_timer_(ec_, [this](salticidae::TimerEvent &) { start_view_change(); }),
   service_(std::move(service)) {
 
@@ -78,7 +78,7 @@ void Node::add_replica(uint32_t id, const NetAddr &addr) {
 
 void Node::add_client(uint32_t id, const NetAddr &addr) {
   clients_[id] = net_->connect_sync(addr);
-  logger_->info("CONNECTED CLIENT id={} ip={} port={}", id, NETADDR_STR(addr));
+  logger_->info("CONNECTED CLIENT id={} addr={}", id, NETADDR_STR(addr));
 }
 
 void Node::start(const NetAddr &listen_addr) {
@@ -123,11 +123,10 @@ void Node::register_handlers() {
     });
 }
 
-// Satblish which connections belong to who
+// Stablish which connections belong to who
 void Node::on_handshake(HandshakeMsg &&m, 
                     const salticidae::MsgNetwork<uint8_t>::conn_t &conn) {
     conn_to_peer_[conn.get()] = m.id;
-    logger_->info("HANDSHAKE replica={}", m.id);
 }
 
 
@@ -139,21 +138,22 @@ void Node::on_request(RequestMsg &&m,
   metrics_->inc_msg("request");
   logger_->info("MSG_RECV REQUEST view={} op={} from={} ts={}",
                 view_, m.operation, m.client_id, m.timestamp);
+
+  // Check for duplicate request by (client_id, timestamp)
+  auto last_reply_it = last_replies_.find(m.client_id);
+  if (last_reply_it != last_replies_.end()) {
+    if (last_reply_it->second.timestamp == m.timestamp) {
+      // Resend last reply
+      send_to_client(m.client_id, ReplyMsg(view_, m.timestamp, m.client_id, id_, 
+                                           last_reply_it->second.result));
+      return;
+    }
+  }
+
   if (view_changing_) return;
 
   // Requests are only processed by primary
   if (this->is_primary()) {
-    // Check for duplicate request by (client_id, timestamp)
-    auto last_reply_it = last_replies_.find(m.client_id);
-    if (last_reply_it != last_replies_.end()) {
-      if (last_reply_it->second.timestamp == m.timestamp) {
-        // Resend last reply
-        send_to_client(m.client_id, ReplyMsg(view_, m.timestamp, m.client_id, id_, 
-                                             last_reply_it->second.result));
-        return;
-      }
-    }
-
     // Verify sequence within watermarks
     if (seq_num_ < h_ || seq_num_ >= H_) return;
     seq_num_++;
@@ -177,6 +177,7 @@ void Node::on_request(RequestMsg &&m,
     metrics_->set_inflight(reqlog_.size());
   } else {
     // Otherwise, send to primary
+    start_timer_if_not_running();
     send_to_replica(primary(), RequestMsg(m.operation, m.timestamp, m.client_id));
   }
 }
@@ -233,12 +234,13 @@ void Node::on_preprepare_impl(PrePrepareMsg &&m,
 // PREPARE
 // --------------------------------------------------------------------------
 void Node::on_prepare(PrepareMsg &&m, 
-                      const MsgNetwork<uint8_t>::conn_t &) {
+                      const MsgNetwork<uint8_t>::conn_t &conn) {
   metrics_->inc_msg("prepare");
   logger_->info("MSG_RECV PREPARE view={} seq={} from={} hash={}",
                 m.view, m.seq_num, m.replica_id, m.req_digest.to_hex().substr(0, 5));
 
   // Discard message criteria
+  if (comes_from_primary(conn)) return;
   if (view_changing_) return;
   if (m.view != view_) return;
   if (m.seq_num < h_ || m.seq_num > H_) return;
@@ -407,7 +409,7 @@ void Node::garbage_collect() {
 // --------------------------------------------------------------------------
 void Node::start_view_change() {
   view_changing_ = true;
-  uint64_t next_view = ++view_;
+  uint64_t next_view = view_ + 1;
   view_change_timeout_count_++;
     
   logger_->info("VIEW CHANGE new_view={}", next_view);
@@ -512,8 +514,8 @@ void Node::on_viewchange(ViewChangeMsg &&m, const MsgNetwork<uint8_t>::conn_t &)
 void Node::on_newview(NewViewMsg &&m, const MsgNetwork<uint8_t>::conn_t &conn) {
   logger_->info("MSG_RECV NEW_VIEW view={} new_view={} V={} O={}",
                 view_, m.next_view, m.view_changes.size(), m.pre_prepares.size());
-  // Only accept messages from primary
-  if (!comes_from_primary(conn)) return;
+  // Only accept messages from primary for new view
+  if (!comes_from_primary(conn, m.next_view)) return;
   if (!view_changing_ || m.next_view <= view_) {
     return; // Ignore: either not waiting, or message is stale
   }

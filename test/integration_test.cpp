@@ -100,6 +100,9 @@ private:
   std::vector<ReplicaInfo> replicas_;
   uint32_t n_;
   uint32_t f_;
+  uint32_t primary_;
+
+  const double vc_timeout_{2.0};
 
   // Client network
   EventContext client_ec_;
@@ -110,7 +113,7 @@ private:
   uint64_t request_counter_;
 
 public:
-  TestCluster(uint32_t n) : n_(n), f_((n - 1) / 3), client_id_(0), request_counter_(0) {
+  TestCluster(uint32_t n) : n_(n), f_((n - 1) / 3), primary_(0), client_id_(0), request_counter_(0) {
     client_addr_ = NetAddr("127.0.0.1:11000");
   }
 
@@ -124,7 +127,7 @@ public:
       auto service = std::make_unique<TestService>();
       service->initialize();
       info.service = service.get();
-      info.node = std::make_unique<Node>(i, n_, std::move(service));
+      info.node = std::make_unique<Node>(i, n_, std::move(service), std::nullopt, vc_timeout_);
       replicas_.push_back(std::move(info));
     }
 
@@ -196,10 +199,18 @@ public:
     std::cout << "[Cluster] Stopped\n" << std::endl;
   }
 
-  void send_request(const std::string& operation, uint32_t replica_id) {
+  void send_request(const std::string& operation) {
     RequestMsg req(operation, request_counter_++, client_id_);
-    std::cout << "[Client] Sending: " << operation << " to cluster" << std::endl;
-    client_net_->send_msg(req, replicas_[replica_id].conn);
+    std::cout << "[Client] Sending: " << operation << " to primary cluster" << std::endl;
+    client_net_->send_msg(req, replicas_[primary_].conn);
+  }
+
+  void broadcast_request(const std::string& operation) {
+    RequestMsg req(operation, request_counter_++, client_id_);
+    std::cout << "[Client] Sending broadcast: " << operation << " to cluster" << std::endl;
+    for (uint32_t i = 0; i < n_; i++) {
+      client_net_->send_msg(req, replicas_[i].conn);
+    }
   }
 
   void on_reply(ReplyMsg &&m, const MsgNetwork<uint8_t>::conn_t &) {
@@ -214,7 +225,11 @@ public:
     if (replicas_[id].thread.joinable()) {
       replicas_[id].thread.join();
     }
-    std::cout << "[Cluster] Replica " << id << " crashed"<< std::endl;
+    std::cout << "[Cluster] Replica " << id << " crashed" << std::endl;
+  }
+
+  void set_primary(uint32_t primary) {
+    primary_ = primary;
   }
 
   void set_byzantine_behavior(uint32_t id, ExecutionHook hook) {
@@ -267,9 +282,54 @@ public:
     }
   }
 
+  // Wait until view change
+  bool wait_for_viewchange(uint32_t expected_view, uint32_t timeout_ms = 10000) {
+    std::cout << "[Wait] Waiting for view change..." << std::endl;
+
+    auto start = std::chrono::steady_clock::now();
+
+    while (true) {
+      bool all_match = true;
+
+      // Check if all non-crashed replicas are in expected view
+      for (const auto& rep : replicas_) {
+        if (!rep.crashed && rep.node->view_ != expected_view) {
+          all_match = false;
+          break;
+        }
+      }
+
+      if (all_match) {
+        std::cout << "[Wait] View changed correctly!" << std::endl;
+        return true;
+      }
+
+      // Check timeout
+      auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - start).count();
+
+      if (elapsed > timeout_ms) {
+        std::cout << "[Wait] Timeout waiting for view " << expected_view << std::endl;
+
+        // Show current state
+        for (const auto& rep : replicas_) {
+          if (!rep.crashed) {
+            std::cout << "  Replica " << rep.id << ": view=" 
+              << rep.node->view_ << std::endl;
+          } else {
+            std::cout << "  Replica " << rep.id << ": CRASHED" << std::endl;
+          }
+        }
+        return false;
+      }
+
+      std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+  }
+
   // Check that all services are in the same state
   bool verify_consensus() {
-    std::cout << "[Verify] Checking consensus ..." << std::endl;
+    std::cout << "[Verify] Checking consensus..." << std::endl;
     std::map<uint32_t, uint32_t> counter_votes;
     std::map<size_t, uint32_t> op_votes;
 
@@ -329,6 +389,24 @@ public:
 
     return consensus;
   }
+
+  bool verify_current_view(uint32_t view) {
+    for (const auto& rep : replicas_) {
+      if (!rep.crashed && rep.node->view_ != view) {
+        std::cout << "[Verify] VIEW: System is not in view: " << view << std::endl;
+        for (const auto& rep : replicas_) {
+          if (!rep.crashed) {
+            std::cout << "  Replica " << rep.id << ": view=" << rep.node->view_ << std::endl;
+          } else {
+            std::cout << "  Replica " << rep.id << ": CRASHED" << std::endl;
+          }
+        }
+        return false;
+      }
+    }
+    std::cout << "[Verify] VIEW: System is in view: " << view << std::endl;
+    return true;
+  }
 };
 
 // ============================================================================
@@ -344,9 +422,9 @@ bool test_normal_operation() {
   TestCluster cluster(4);
   cluster.start();
 
-  cluster.send_request("INC", 0);
-  cluster.send_request("INC", 1);
-  cluster.send_request("ADD:40", 2);
+  cluster.send_request("INC");
+  cluster.send_request("INC");
+  cluster.send_request("ADD:40");
 
   // 4 replicas should execute
   if (!cluster.wait_for_operations(3, 4)) {
@@ -373,7 +451,7 @@ bool test_f_crashed() {
   cluster.crash_replica(3);
   cluster.crash_replica(5);
 
-  cluster.send_request("SET:42", 0);
+  cluster.send_request("SET:42");
 
   // 5 replicas should execute
   if (!cluster.wait_for_operations(1, 5)) {
@@ -400,10 +478,10 @@ bool test_no_consensus() {
   cluster.crash_replica(1);
   cluster.crash_replica(2);
 
-  cluster.send_request("INC", 0);
-  cluster.send_request("INC", 0);
-  cluster.send_request("ADD:20", 0);
-  cluster.send_request("ADD:20", 0);
+  cluster.send_request("INC");
+  cluster.send_request("INC");
+  cluster.send_request("ADD:20");
+  cluster.send_request("ADD:20");
 
   // No replicas should execute
   if (!cluster.wait_for_operations(0, 2)) {
@@ -438,7 +516,6 @@ bool test_byzantine() {
       return original_op;
   });
 
-  cluster.send_request("SET:42", 0);
 
   // Fun begins: mess up the cluster
   // Send a valid PrePrepare to everybody
@@ -446,9 +523,10 @@ bool test_byzantine() {
   auto fake_digest = salticidae::get_hash("SET:666");
   uint64_t view = 0;
   uint64_t seq_num = 1;
-  cluster.forge_broadcast(byzanite_node, 
-                          PrePrepareMsg(view, seq_num, fake_digest, forged_request));
-  // Send a valid Prepare message
+
+  // Start consensus on SET:42
+  cluster.send_request("SET:42");
+  // Send a valid Prepare message as executing SET:666
   cluster.forge_broadcast(byzanite_node, 
                           PrepareMsg(view, seq_num, fake_digest, byzanite_node));
 
@@ -463,6 +541,46 @@ bool test_byzantine() {
      passed = false;
   }
   
+  cluster.stop();
+  return passed;
+}
+
+bool test_view_change() {
+  std::cout << "╔══════════════════════════════════════════════╗" << std::endl;
+  std::cout << "║  TEST: View Change (Primary Failure)         ║" << std::endl;
+  std::cout << "╚══════════════════════════════════════════════╝" << std::endl;
+  bool passed = true;
+
+  TestCluster cluster(4);
+  cluster.start();
+
+  // Crash Primary in view 0
+  cluster.crash_replica(0);
+
+  cluster.send_request("SET:42");
+  // Nothing should be executed
+  if (cluster.wait_for_operations(1, 4)) {
+    passed = false;
+  }
+  // Timeout, no response, broadcast the nodes
+  cluster.broadcast_request("SET:42");
+
+  // Validate that view change happenned
+  if (!cluster.wait_for_viewchange(1)) {
+    passed = false;
+  }
+
+  // Send new request to primary
+  cluster.set_primary(1);
+  cluster.send_request("SET:42");
+  // Everything executed in new view
+  if (!cluster.wait_for_operations(1, 3)) {
+    passed = false;
+  }
+  if (!cluster.verify_consensus()) {
+     passed = false;
+  }
+
   cluster.stop();
   return passed;
 }
@@ -484,7 +602,7 @@ int main() {
     {"Crashed f Nodes", test_f_crashed},
     {"No Consensus", test_no_consensus},
     {"Byzantine Execution", test_byzantine},
-    //{"Force View Change", test_view_change},
+    {"Force View Change", test_view_change},
   };
 
   int passed = 0;

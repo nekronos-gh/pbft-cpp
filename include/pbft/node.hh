@@ -27,9 +27,10 @@ struct NodeTLSConfig {
 
 class Node {
 public:
-  Node(uint32_t replica_id, uint32_t num_replicas,
+  Node(uint32_t replica_id, uint32_t num_replicas, 
        std::unique_ptr<ServiceInterface> service,
-       std::optional<NodeTLSConfig> tls_config = std::nullopt);
+       std::optional<NodeTLSConfig> tls_config = std::nullopt,
+       double vc_timeout=2.0);
   ~Node();
 
   void add_replica(uint32_t id, const salticidae::NetAddr &addr);
@@ -115,7 +116,7 @@ PBFT_TESTING_ACCESS:
   void start_view_change();
 
   // Liveness
-  constexpr static const double vc_timeout_{2.0};
+  const double vc_timeout_;
   salticidae::TimerEvent view_change_timer_;
   bool view_changing_{false};
   // (new view) -> (replica_id -> View Change message)
@@ -144,10 +145,19 @@ PBFT_TESTING_ACCESS:
 
   // Helpers
   bool is_primary() const { return id_ == (view_ % n_); }
+  // Primary in current view
   bool comes_from_primary(const salticidae::MsgNetwork<uint8_t>::conn_t &conn) const { 
     auto it = conn_to_peer_.find(conn.get());
     if (it == conn_to_peer_.end()) return false;
     if (it->second == primary()) return true;
+    return false;
+  }
+  // Primary in a specific view
+  bool comes_from_primary(const salticidae::MsgNetwork<uint8_t>::conn_t &conn,
+                          uint32_t new_view) const { 
+    auto it = conn_to_peer_.find(conn.get());
+    if (it == conn_to_peer_.end()) return false;
+    if (it->second == new_view % n_) return true;
     return false;
   }
   uint32_t primary() const { return view_ % n_; }

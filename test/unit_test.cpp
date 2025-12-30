@@ -31,7 +31,7 @@ protected:
     EXPECT_CALL(*service, initialize()).Times(1).WillOnce(Return());
     // Create 4 replicas (f=1)
     node_ = std::make_unique<Node>(0, NUM_REPLICAS, std::move(service_ptr));
-    // Add the connections as trusted
+    // Send always from primary by default
     node_->conn_to_peer_[dummy_conn.get()] = 0;
   }
 
@@ -259,6 +259,8 @@ TEST_F(PBFTNodeTest, PrepareIgnoredIfSeqOutOfWatermarks) {
 TEST_F(PBFTNodeTest, PrepareBufferedWithoutPrePrepare) {
   uint64_t seq = 1;
   PrepareMsg m(node_->view_, seq, salticidae::get_hash("op"), 1);
+  // Do not send from primary (Node 1)
+  node_->conn_to_peer_[dummy_conn.get()] = 1;
   node_->on_prepare(std::move(m), dummy_conn);
 
   ASSERT_TRUE(node_->reqlog_.count(seq));
@@ -309,6 +311,8 @@ TEST_F(PBFTNodeTest, TryPrepareReachesPreparedWhenQuorumMet) {
   // Reach 2f + 1
   for (uint64_t i = 0; i < 2 * MAX_FAULTY + 1; i++) {
     PrepareMsg p(node_->view_, seq, digest, i);
+    // Do not send from primary (Node 1)
+    node_->conn_to_peer_[dummy_conn.get()] = 1;
     node_->on_prepare(std::move(p), dummy_conn);
   }
 
@@ -343,10 +347,14 @@ TEST_F(PBFTNodeTest, OutOfOrderPrePrepareTriggersTryPrepare) {
   // Send 2f
   for (uint64_t i = 1; i < 2 * MAX_FAULTY + 1; i++) {
     PrepareMsg m(node_->view_, seq, digest, i);
+    // Do not send from primary (Node 1)
+    node_->conn_to_peer_[dummy_conn.get()] = 1;
     node_->on_prepare(std::move(m), dummy_conn);
   }
 
   // Out of order PrePreare
+  // Now send from primary
+  node_->conn_to_peer_[dummy_conn.get()] = 0;
   PrePrepareMsg m(node_->view_, seq, digest, req);
   node_->on_preprepare(std::move(m), dummy_conn);
 
@@ -644,8 +652,8 @@ TEST_F(PBFTNodeTest, StartViewChangeUpdatesState) {
 
   node_->start_view_change();
 
-  // 1. View should increment
-  EXPECT_EQ(node_->view_, 1);
+  // 1. View should not change inmediatly
+  EXPECT_EQ(node_->view_, 0);
   // 2. State should be view_changing
   EXPECT_TRUE(node_->view_changing_);
   // 3. Timeout count should increment
@@ -729,8 +737,8 @@ TEST_F(PBFTNodeTest, OnNewViewUpdatesStateAndProcessesOset) {
 
   NewViewMsg nv(new_view, V, O);
 
-  // Add as trusted primary
-  node_->conn_to_peer_[dummy_conn.get()] = 3;
+  // Send from new primary
+  node_->conn_to_peer_[dummy_conn.get()] = 0;
   node_->on_newview(std::move(nv), dummy_conn);
 
   // State Updated
