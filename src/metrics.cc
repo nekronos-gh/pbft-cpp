@@ -1,5 +1,4 @@
 #include "pbft/metrics.hh"
-#include <vector>
 
 using namespace prometheus;
 
@@ -83,7 +82,7 @@ void Metrics::observe_phase(const std::string &phase, double seconds) {
     it->second->Observe(seconds);
 }
 
-void Metrics::set_watermarks(uint64_t low, uint64_t high) { 
+void Metrics::set_watermarks(uint64_t low, uint64_t high) {
   low_watermark_->Set(low);
   high_watermark_->Set(high);
 }

@@ -1,12 +1,12 @@
 #pragma once
 #include <memory>
-#include <string>
-#include <unordered_map>
-#include <prometheus/exposer.h>
-#include <prometheus/registry.h>
 #include <prometheus/counter.h>
+#include <prometheus/exposer.h>
 #include <prometheus/gauge.h>
 #include <prometheus/histogram.h>
+#include <prometheus/registry.h>
+#include <string>
+#include <unordered_map>
 
 namespace pbft {
 
@@ -37,14 +37,13 @@ private:
   prometheus::Family<prometheus::Histogram> *phase_family_;
 
   // handles
-  std::unordered_map<std::string, prometheus::Counter*> msg_;
-  std::unordered_map<std::string, prometheus::Counter*> vc_;
+  std::unordered_map<std::string, prometheus::Counter *> msg_;
+  std::unordered_map<std::string, prometheus::Counter *> vc_;
   prometheus::Gauge *view_;
   prometheus::Gauge *inflight_;
   prometheus::Gauge *low_watermark_;
   prometheus::Gauge *high_watermark_;
-  std::unordered_map<std::string, prometheus::Histogram*> phase_;
+  std::unordered_map<std::string, prometheus::Histogram *> phase_;
 };
 
 } // namespace pbft
-
