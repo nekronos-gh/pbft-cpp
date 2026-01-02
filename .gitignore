@@ -1,10 +1,7 @@
-docker/
-.nvim.lua
-
-
 # CMake
 build/
 .cache/
+cmake/
 CMakeLists.txt.user
 CMakeCache.txt
 CMakeFiles

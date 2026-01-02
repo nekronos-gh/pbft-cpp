@@ -1,15 +1,13 @@
 #pragma once
-#include <cstdint>
-#include <string>
-#include <vector>
 #include "salticidae/stream.h"
+#include <string>
 
 namespace pbft {
 
 // Deterministic service to be replicated by PBFT.
-// The abstract ServiceInterface class defines the contract that any service must implement.
-// Execute: process client requests
-// Get/Set/Digest checkpoints: manage snapshots
+// The abstract ServiceInterface class defines the contract that any service
+// must implement. Execute: process client requests Get/Set/Digest checkpoints:
+// manage snapshots
 class ServiceInterface {
 public:
   virtual ~ServiceInterface() = default;
@@ -23,4 +21,4 @@ public:
   // Checkpointing.
   virtual uint256_t get_checkpoint_digest() = 0;
 };
-} 
+} // namespace pbft
