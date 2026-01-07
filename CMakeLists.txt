@@ -8,6 +8,9 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_FLAGS_DEBUG "-g -O0 -fno-inline" CACHE STRING "" FORCE)
 
+option(PBFT_BUILD_EXAMPLES "Build PBFT examples" OFF)
+option(PBFT_BUILD_TESTS "Build PBFT tests" OFF)
+
 add_compile_options(
     -Wall
     -Wextra
@@ -70,5 +73,11 @@ install(EXPORT pbftTargets
   DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/pbft
 )
 
-# Include subdirectory with tests
-add_subdirectory(test)
+# Include subdirectory with tests and examples
+if(PBFT_BUILD_TESTS)
+  add_subdirectory(test)
+endif()
+if (PBFT_BUILD_EXAMPLES)
+  add_subdirectory(examples)
+endif()
+

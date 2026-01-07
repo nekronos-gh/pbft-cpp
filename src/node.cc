@@ -78,6 +78,8 @@ Node::~Node() {
 }
 
 void Node::add_replica(uint32_t id, const NetAddr &addr) {
+  if (id == id_)
+    return;
   peers_[id] = net_->connect_sync(addr);
   logger_->info("CONNECTED REPLICA id={} addr={}", id, NETADDR_STR(addr));
 }
