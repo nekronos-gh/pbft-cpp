@@ -22,7 +22,7 @@ public:
 
     if (cmd == "PUT") {
       std::string key;
-      int value;
+      uint32_t value;
       if (iss >> key >> value) {
         _store[key] = value;
         return "OK";
@@ -67,42 +67,40 @@ public:
 private:
   // Using std::map (Red-Black Tree)
   // This sorts keys automatically, making checkpointing O(N) and deterministic
-  std::map<std::string, int> _store;
+  std::map<std::string, uint32_t> _store;
 };
 
 using json = nlohmann::json;
-// Parse config
-pbft::NodeConfig load_node_config(const std::string &filename) {
+std::unique_ptr<pbft::Node> create_node(const std::string &filename,
+                                        uint32_t node_id) {
   std::ifstream f(filename);
   if (!f.is_open()) {
     throw std::runtime_error("Could not open config file: " + filename);
   }
 
-  nlohmann::json data = nlohmann::json::parse(f);
-
+  json data = json::parse(f);
   pbft::NodeConfig cfg;
   cfg.num_replicas = data.value("num_replicas", 4);
   cfg.log_size = data.value("log_size", 100);
   cfg.checkpoint_interval = data.value("checkpoint_interval", 50);
   cfg.vc_timeout = data.value("vc_timeout", 2.0);
 
-  return cfg;
-}
-
-void connect_peers(pbft::Node &node, const std::string &filename) {
-  std::ifstream f(filename);
-  if (!f.is_open()) {
-    throw std::runtime_error("Could not open config file: " + filename);
-  }
-
-  nlohmann::json data = nlohmann::json::parse(f);
+  // Configure the node
+  auto service = std::make_unique<KeyValueStore>();
+  auto node = std::make_unique<pbft::Node>(node_id, cfg, std::move(service));
 
   // Add Replicas
+  salticidae::NetAddr node_addr;
   if (data.contains("replicas")) {
     for (auto &[key, val] : data["replicas"].items()) {
       uint32_t id = std::stoi(key);
       salticidae::NetAddr addr(val.get<std::string>());
-      node.add_replica(id, addr);
+      if (id == node_id) {
+        // Set apprpriate address
+        node_addr = addr;
+      } else {
+        node->add_replica(id, addr);
+      }
     }
   }
 
@@ -111,17 +109,18 @@ void connect_peers(pbft::Node &node, const std::string &filename) {
     for (auto &[key, val] : data["clients"].items()) {
       uint32_t id = std::stoi(key);
       salticidae::NetAddr addr(val.get<std::string>());
-      node.add_client(id, addr);
+      node->add_client(id, addr);
     }
   }
+
+  node->start(node_addr);
+
+  return node;
 }
 
 int main(int argc, char **argv) {
   int replica_id = -1;
-  std::string node_ip = "0.0.0.0";
-  int node_port = 9500;
-  std::string node_config = "node_config.json";
-  std::string system_config = "node_config.json";
+  std::string config = "";
 
   // Parse arguments
   for (int i = 1; i < argc; ++i) {
@@ -129,26 +128,21 @@ int main(int argc, char **argv) {
     if (arg == "--id" && i + 1 < argc) {
       replica_id = std::stoi(argv[++i]);
     }
+    if (arg == "--config" && i + 1 < argc) {
+      config = argv[++i];
+    }
   }
 
-  if (replica_id == -1) {
-    std::cerr << "Usage: " << argv[0] << " --id <ID> \n";
+  if (replica_id == -1 || config.size() == 0) {
+    std::cerr << "Usage: " << argv[0]
+              << " --id <replica-id> --config <config-file>\n";
     return 1;
   }
 
   try {
-
-    // Configure the node
-    pbft::NodeConfig config = load_node_config(node_config);
-    auto service = std::make_unique<KeyValueStore>();
-    pbft::Node replicated_service(replica_id, config, std::move(service));
-    connect_peers(replicated_service, system_config);
-
-    // Run the node
-    salticidae::NetAddr node_addr(node_ip + ":" + std::to_string(node_port));
-    replicated_service.start(node_addr);
-
-    replicated_service.run();
+    // Create and run the node
+    auto kv_service_node = create_node(config, replica_id);
+    kv_service_node->run();
 
   } catch (const std::exception &e) {
     std::cerr << "Fatal Error: " << e.what() << "\n";
