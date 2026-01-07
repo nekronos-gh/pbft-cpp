@@ -1,0 +1,6 @@
+{
+  "num_replicas": 4,
+  "log_size": 200,
+  "checkpoint_interval": 10,
+  "vc_timeout": 2.5
+}
