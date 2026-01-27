@@ -16,6 +16,7 @@ public:
   virtual void initialize() = 0;
 
   // Deterministic operation execution.
+  // TODO: Generic return type
   virtual std::string execute(const std::string &operation) = 0;
 
   // Checkpointing.

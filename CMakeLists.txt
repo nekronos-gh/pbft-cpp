@@ -31,6 +31,7 @@ pkg_check_modules(LIBUV REQUIRED libuv)
 add_library(pbft_core STATIC
   src/node.cc
   src/metrics.cc
+  src/client.cc
 )
 add_library(pbft::core ALIAS pbft_core)
 

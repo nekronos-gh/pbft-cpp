@@ -153,9 +153,9 @@ public:
   bool is_waiting_for_request();
 
   // Helpers
-  bool is_primary() const { return id_ == (view_ % n_); }
+  inline bool is_primary() const { return id_ == (view_ % n_); }
   // Primary in current view
-  bool comes_from_primary(
+  inline bool comes_from_primary(
       const salticidae::MsgNetwork<uint8_t>::conn_t &conn) const {
     auto it = conn_to_peer_.find(conn.get());
     if (it == conn_to_peer_.end())
@@ -165,8 +165,9 @@ public:
     return false;
   }
   // Primary in a specific view
-  bool comes_from_primary(const salticidae::MsgNetwork<uint8_t>::conn_t &conn,
-                          uint32_t new_view) const {
+  inline bool
+  comes_from_primary(const salticidae::MsgNetwork<uint8_t>::conn_t &conn,
+                     uint32_t new_view) const {
     auto it = conn_to_peer_.find(conn.get());
     if (it == conn_to_peer_.end())
       return false;
@@ -174,9 +175,9 @@ public:
       return true;
     return false;
   }
-  uint32_t primary() const { return view_ % n_; }
+  inline uint32_t primary() const { return view_ % n_; }
 
-  template <typename M> void broadcast(const M &m) {
+  template <typename M> inline void broadcast(const M &m) {
     for (const auto &kv : peers_) {
       if (kv.first == id_)
         continue;
@@ -187,7 +188,8 @@ public:
     }
   }
 
-  template <typename M> void send_to_replica(uint32_t replica_id, const M &m) {
+  template <typename M>
+  inline void send_to_replica(uint32_t replica_id, const M &m) {
     auto it = peers_.find(replica_id);
     if (it == peers_.end())
       return;
@@ -197,7 +199,8 @@ public:
     }
   }
 
-  template <typename M> void send_to_client(uint32_t client_id, const M &m) {
+  template <typename M>
+  inline void send_to_client(uint32_t client_id, const M &m) {
     auto it = clients_.find(client_id);
     if (it == clients_.end())
       return;

@@ -22,7 +22,7 @@ public:
   MOCK_METHOD(uint256_t, get_checkpoint_digest, (), (override));
 };
 
-class PBFTNodeTest : public ::testing::Test {
+class NodeTest : public ::testing::Test {
 protected:
   void SetUp() override {
     auto service_ptr = std::make_unique<MockService>();
@@ -50,7 +50,7 @@ protected:
 // BASIC INITIALIZATION AND SETUP TESTS
 // ============================================================================
 
-TEST_F(PBFTNodeTest, InitializationCorrect) {
+TEST_F(NodeTest, InitializationCorrect) {
   EXPECT_EQ(node_->id_, 0);
   EXPECT_EQ(node_->n_, NUM_REPLICAS);
   EXPECT_EQ(node_->f_, MAX_FAULTY);
@@ -62,7 +62,7 @@ TEST_F(PBFTNodeTest, InitializationCorrect) {
   EXPECT_EQ(node_->last_exec_, 0);
 }
 
-TEST_F(PBFTNodeTest, IsPrimary) {
+TEST_F(NodeTest, IsPrimary) {
   EXPECT_TRUE(node_->is_primary());
   EXPECT_EQ(node_->primary(), node_->id_);
 
@@ -76,7 +76,7 @@ TEST_F(PBFTNodeTest, IsPrimary) {
 // HANDSHAKE TESTS
 // ============================================================================
 
-TEST_F(PBFTNodeTest, PopulateConnToPeer) {
+TEST_F(NodeTest, PopulateConnToPeer) {
   HandshakeMsg handshake(1);
   node_->on_handshake(std::move(handshake), dummy_conn);
 
@@ -89,7 +89,7 @@ TEST_F(PBFTNodeTest, PopulateConnToPeer) {
 // REQUEST PROCESSING TESTS
 // ============================================================================
 
-TEST_F(PBFTNodeTest, RequestIgnoredIfViewChanging) {
+TEST_F(NodeTest, RequestIgnoredIfViewChanging) {
   // Trigger test while on view change
   node_->view_changing_ = true;
   RequestMsg req("op", 1000, 0);
@@ -100,7 +100,7 @@ TEST_F(PBFTNodeTest, RequestIgnoredIfViewChanging) {
   EXPECT_EQ(node_->seq_num_, 0);
 }
 
-TEST_F(PBFTNodeTest, RequestIgnoredIfIsNotPrimary) {
+TEST_F(NodeTest, RequestIgnoredIfIsNotPrimary) {
   // Trigger for non_primary
   node_->id_ = 1;
   RequestMsg req("op", 1000, 0);
@@ -111,7 +111,7 @@ TEST_F(PBFTNodeTest, RequestIgnoredIfIsNotPrimary) {
   EXPECT_EQ(node_->seq_num_, 0);
 }
 
-TEST_F(PBFTNodeTest, RequestIgnoredIfIsSeqOutOfWatermarks) {
+TEST_F(NodeTest, RequestIgnoredIfIsSeqOutOfWatermarks) {
   RequestMsg req("op", 1000, 0);
   node_->seq_num_ = node_->H_;
   node_->on_request(std::move(req), dummy_conn);
@@ -120,7 +120,7 @@ TEST_F(PBFTNodeTest, RequestIgnoredIfIsSeqOutOfWatermarks) {
   EXPECT_TRUE(node_->reqlog_.empty());
 }
 
-TEST_F(PBFTNodeTest, RequestDuplicateUsesCache) {
+TEST_F(NodeTest, RequestDuplicateUsesCache) {
   // Inject previous response
   Node::ClientReplyInfo cached;
   cached.timestamp = 2000;
@@ -139,7 +139,7 @@ TEST_F(PBFTNodeTest, RequestDuplicateUsesCache) {
   EXPECT_EQ(node_->last_replies_[0].result, "executed_result");
 }
 
-TEST_F(PBFTNodeTest, RequestPrimaryCreatesLogEntry) {
+TEST_F(NodeTest, RequestPrimaryCreatesLogEntry) {
   RequestMsg req("op", 1000, 0);
   node_->on_request(std::move(req), dummy_conn);
 
@@ -159,7 +159,7 @@ TEST_F(PBFTNodeTest, RequestPrimaryCreatesLogEntry) {
   EXPECT_TRUE(entry.prepares.count(node_->id_));
 }
 
-TEST_F(PBFTNodeTest, PrimarySequenceNumberValidation) {
+TEST_F(NodeTest, PrimarySequenceNumberValidation) {
   // Sequence number outside the window
 
   // Lower bound
@@ -181,7 +181,7 @@ TEST_F(PBFTNodeTest, PrimarySequenceNumberValidation) {
 // PRE_PREPARE PROCESSING TESTS
 // ============================================================================
 
-TEST_F(PBFTNodeTest, PrePrepareIgnoredIfNotFromPrimary) {
+TEST_F(NodeTest, PrePrepareIgnoredIfNotFromPrimary) {
   // Does not come from primary
   node_->conn_to_peer_[dummy_conn.get()] = 1;
   PrePrepareMsg m(0, 0, salticidae::get_hash("op"), RequestMsg("op", 0, 0));
@@ -190,7 +190,7 @@ TEST_F(PBFTNodeTest, PrePrepareIgnoredIfNotFromPrimary) {
   EXPECT_TRUE(node_->reqlog_.empty());
 }
 
-TEST_F(PBFTNodeTest, PrePrepareIgnoredIfViewChanging) {
+TEST_F(NodeTest, PrePrepareIgnoredIfViewChanging) {
   node_->view_changing_ = true;
   PrePrepareMsg m(0, 0, salticidae::get_hash("op"), RequestMsg("op", 0, 0));
   node_->on_preprepare(std::move(m), dummy_conn);
@@ -198,7 +198,7 @@ TEST_F(PBFTNodeTest, PrePrepareIgnoredIfViewChanging) {
   EXPECT_TRUE(node_->reqlog_.empty());
 }
 
-TEST_F(PBFTNodeTest, PrePrepareIgnoredIfViewMismatch) {
+TEST_F(NodeTest, PrePrepareIgnoredIfViewMismatch) {
   node_->view_ = 1;
   PrePrepareMsg m(0, 0, salticidae::get_hash("op"), RequestMsg("op", 0, 0));
   node_->on_preprepare(std::move(m), dummy_conn);
@@ -206,7 +206,7 @@ TEST_F(PBFTNodeTest, PrePrepareIgnoredIfViewMismatch) {
   EXPECT_TRUE(node_->reqlog_.empty());
 }
 
-TEST_F(PBFTNodeTest, PrePrepareIgnoredIfSeqOutOfWatermarks) {
+TEST_F(NodeTest, PrePrepareIgnoredIfSeqOutOfWatermarks) {
   node_->h_ = 10;
   node_->H_ = 20;
   // seq_num below h_
@@ -221,7 +221,7 @@ TEST_F(PBFTNodeTest, PrePrepareIgnoredIfSeqOutOfWatermarks) {
   EXPECT_TRUE(node_->reqlog_.empty());
 }
 
-TEST_F(PBFTNodeTest, PrePrepareIgnoredIfDigestConflicts) {
+TEST_F(NodeTest, PrePrepareIgnoredIfDigestConflicts) {
   // First, one pre-prepare with some digest
   PrePrepareMsg ok(node_->view_, 10, salticidae::get_hash("a"),
                    RequestMsg("a", 0, 0));
@@ -238,7 +238,7 @@ TEST_F(PBFTNodeTest, PrePrepareIgnoredIfDigestConflicts) {
   EXPECT_EQ(entry.req.operation, "a");
 }
 
-TEST_F(PBFTNodeTest, PrePrepareCreatesLogEntryAndSetsPrePrepared) {
+TEST_F(NodeTest, PrePrepareCreatesLogEntryAndSetsPrePrepared) {
   uint64_t seq = 1;
   PrePrepareMsg m(node_->view_, seq, salticidae::get_hash("op"),
                   RequestMsg("op", 123, 42));
@@ -264,7 +264,7 @@ TEST_F(PBFTNodeTest, PrePrepareCreatesLogEntryAndSetsPrePrepared) {
 // PREPARE PROCESSING TESTS
 // ============================================================================
 
-TEST_F(PBFTNodeTest, PrepareIgnoredIfComesFromPrimary) {
+TEST_F(NodeTest, PrepareIgnoredIfComesFromPrimary) {
   // Send from primary
   node_->conn_to_peer_[dummy_conn.get()] = 0;
   PrepareMsg m(node_->view_, 0, salticidae::get_hash("op"), 1);
@@ -273,7 +273,7 @@ TEST_F(PBFTNodeTest, PrepareIgnoredIfComesFromPrimary) {
   EXPECT_TRUE(node_->reqlog_.empty());
 }
 
-TEST_F(PBFTNodeTest, PrepareIgnoredIfViewChanging) {
+TEST_F(NodeTest, PrepareIgnoredIfViewChanging) {
   // Do not send from primary (Node 1)
   node_->conn_to_peer_[dummy_conn.get()] = 1;
   node_->view_changing_ = true;
@@ -283,7 +283,7 @@ TEST_F(PBFTNodeTest, PrepareIgnoredIfViewChanging) {
   EXPECT_TRUE(node_->reqlog_.empty());
 }
 
-TEST_F(PBFTNodeTest, PrepareIgnoredIfViewMismatch) {
+TEST_F(NodeTest, PrepareIgnoredIfViewMismatch) {
   // Do not send from primary (Node 1)
   node_->conn_to_peer_[dummy_conn.get()] = 1;
   node_->view_ = 2;
@@ -293,7 +293,7 @@ TEST_F(PBFTNodeTest, PrepareIgnoredIfViewMismatch) {
   EXPECT_TRUE(node_->reqlog_.empty());
 }
 
-TEST_F(PBFTNodeTest, PrepareIgnoredIfSeqOutOfWatermarks) {
+TEST_F(NodeTest, PrepareIgnoredIfSeqOutOfWatermarks) {
   // Do not send from primary (Node 1)
   node_->conn_to_peer_[dummy_conn.get()] = 1;
   node_->h_ = 10;
@@ -309,7 +309,7 @@ TEST_F(PBFTNodeTest, PrepareIgnoredIfSeqOutOfWatermarks) {
   EXPECT_TRUE(node_->reqlog_.empty());
 }
 
-TEST_F(PBFTNodeTest, PrepareBufferedWithoutPrePrepare) {
+TEST_F(NodeTest, PrepareBufferedWithoutPrePrepare) {
   // Do not send from primary (Node 1)
   node_->conn_to_peer_[dummy_conn.get()] = 1;
   uint64_t seq = 1;
@@ -325,7 +325,7 @@ TEST_F(PBFTNodeTest, PrepareBufferedWithoutPrePrepare) {
   EXPECT_TRUE(entry.prepares.count(1));
 }
 
-TEST_F(PBFTNodeTest, PrepareDigestConflictPrePrepare) {
+TEST_F(NodeTest, PrepareDigestConflictPrePrepare) {
   uint64_t seq = 1;
   // First set up a pre-prepare with digest1
   RequestMsg req1("op1", 100, 1);
@@ -349,7 +349,7 @@ TEST_F(PBFTNodeTest, PrepareDigestConflictPrePrepare) {
   EXPECT_EQ(entry.digest, digest1);
 }
 
-TEST_F(PBFTNodeTest, TryPrepareReachesPreparedWhenQuorumMet) {
+TEST_F(NodeTest, TryPrepareReachesPreparedWhenQuorumMet) {
   uint64_t seq = 1;
   // Pre-prepare already done
   RequestMsg req("op", 100, 1);
@@ -380,7 +380,7 @@ TEST_F(PBFTNodeTest, TryPrepareReachesPreparedWhenQuorumMet) {
   EXPECT_TRUE(entry.commits.count(node_->id_));
 }
 
-TEST_F(PBFTNodeTest, TryPrepareDoesNotTriggerIfNotPrePrepared) {
+TEST_F(NodeTest, TryPrepareDoesNotTriggerIfNotPrePrepared) {
   auto &entry = node_->reqlog_[0];
   // Do not send from primary (Node 1)
   node_->conn_to_peer_[dummy_conn.get()] = 1;
@@ -398,7 +398,7 @@ TEST_F(PBFTNodeTest, TryPrepareDoesNotTriggerIfNotPrePrepared) {
   EXPECT_TRUE(entry.commits.empty());
 }
 
-TEST_F(PBFTNodeTest, TryPrepareDoesNotTriggerIfNoQuorum) {
+TEST_F(NodeTest, TryPrepareDoesNotTriggerIfNoQuorum) {
   auto &entry = node_->reqlog_[0];
   // Do not send from primary (Node 1)
   node_->conn_to_peer_[dummy_conn.get()] = 1;
@@ -414,7 +414,7 @@ TEST_F(PBFTNodeTest, TryPrepareDoesNotTriggerIfNoQuorum) {
   EXPECT_TRUE(entry.commits.empty());
 }
 
-TEST_F(PBFTNodeTest, OutOfOrderPrePrepareTriggersTryPrepare) {
+TEST_F(NodeTest, OutOfOrderPrePrepareTriggersTryPrepare) {
   uint64_t seq = 1;
   // Do not send from primary (Node 1)
   node_->conn_to_peer_[dummy_conn.get()] = 1;
@@ -445,21 +445,21 @@ TEST_F(PBFTNodeTest, OutOfOrderPrePrepareTriggersTryPrepare) {
 // COMMIT PROCESSING TESTS
 // ============================================================================
 
-TEST_F(PBFTNodeTest, CommitIgnoredIfViewChanging) {
+TEST_F(NodeTest, CommitIgnoredIfViewChanging) {
   node_->view_changing_ = true;
   CommitMsg m(node_->view_, 1, salticidae::get_hash("op"), 1);
   node_->on_commit(std::move(m), dummy_conn);
   EXPECT_TRUE(node_->reqlog_.empty());
 }
 
-TEST_F(PBFTNodeTest, CommitIgnoredIfViewMismatch) {
+TEST_F(NodeTest, CommitIgnoredIfViewMismatch) {
   node_->view_ = 1;
   CommitMsg m(42, 1, salticidae::get_hash("op"), 0);
   node_->on_commit(std::move(m), dummy_conn);
   EXPECT_TRUE(node_->reqlog_.empty());
 }
 
-TEST_F(PBFTNodeTest, CommitIgnoredIfSeqOutOfWatermarks) {
+TEST_F(NodeTest, CommitIgnoredIfSeqOutOfWatermarks) {
   node_->h_ = 10;
   node_->H_ = 20;
   // Too low
@@ -471,7 +471,7 @@ TEST_F(PBFTNodeTest, CommitIgnoredIfSeqOutOfWatermarks) {
   EXPECT_TRUE(node_->reqlog_.empty());
 }
 
-TEST_F(PBFTNodeTest, CommitIgnoredIfDigestMismatch) {
+TEST_F(NodeTest, CommitIgnoredIfDigestMismatch) {
   uint64_t seq = 1;
   auto &entry = node_->reqlog_[seq];
   entry.digest = salticidae::get_hash("op1");
@@ -480,7 +480,7 @@ TEST_F(PBFTNodeTest, CommitIgnoredIfDigestMismatch) {
   EXPECT_TRUE(entry.commits.empty());
 }
 
-TEST_F(PBFTNodeTest, CommitStores) {
+TEST_F(NodeTest, CommitStores) {
   uint64_t seq = 1;
   auto &entry = node_->reqlog_[seq];
   entry.stage = Node::ReqStage::PREPARED;
@@ -492,7 +492,7 @@ TEST_F(PBFTNodeTest, CommitStores) {
   EXPECT_TRUE(entry.commits.count(0));
 }
 
-TEST_F(PBFTNodeTest, TryCommitDoesNotTriggerIfNotPrepared) {
+TEST_F(NodeTest, TryCommitDoesNotTriggerIfNotPrepared) {
   auto &entry = node_->reqlog_[0];
   entry.stage = Node::ReqStage::PRE_PREPARED; // Not PREPARED yet
   entry.digest = salticidae::get_hash("op");
@@ -507,7 +507,7 @@ TEST_F(PBFTNodeTest, TryCommitDoesNotTriggerIfNotPrepared) {
   EXPECT_EQ(entry.stage, Node::ReqStage::PRE_PREPARED); // No transition!
 }
 
-TEST_F(PBFTNodeTest, TryCommitDoesNotTriggerIfNoQuorum) {
+TEST_F(NodeTest, TryCommitDoesNotTriggerIfNoQuorum) {
   auto &entry = node_->reqlog_[0];
   entry.stage = Node::ReqStage::PREPARED;
   entry.digest = salticidae::get_hash("op");
@@ -518,7 +518,7 @@ TEST_F(PBFTNodeTest, TryCommitDoesNotTriggerIfNoQuorum) {
   EXPECT_EQ(entry.stage, Node::ReqStage::PREPARED); // Not enough commits
 }
 
-TEST_F(PBFTNodeTest, CommitWithQuorumTriggersTryCommit) {
+TEST_F(NodeTest, CommitWithQuorumTriggersTryCommit) {
   auto &entry = node_->reqlog_[0];
   entry.stage = Node::ReqStage::PREPARED;
   entry.digest = salticidae::get_hash("op");
@@ -534,7 +534,7 @@ TEST_F(PBFTNodeTest, CommitWithQuorumTriggersTryCommit) {
   EXPECT_EQ(entry.stage, Node::ReqStage::COMMITTED);
 }
 
-TEST_F(PBFTNodeTest, CommitWithQuorumTriggersExecution) {
+TEST_F(NodeTest, CommitWithQuorumTriggersExecution) {
   uint64_t seq = 1;
   auto &entry = node_->reqlog_[seq];
   entry.stage = Node::ReqStage::PREPARED;
@@ -561,7 +561,7 @@ TEST_F(PBFTNodeTest, CommitWithQuorumTriggersExecution) {
 // STATE TRANSITION TESTS
 // ============================================================================
 
-TEST_F(PBFTNodeTest, RequestStateTransitionsPipeline) {
+TEST_F(NodeTest, RequestStateTransitionsPipeline) {
 
   // Simulate the entire pipeline
   uint64_t seq = 1;
@@ -600,7 +600,7 @@ TEST_F(PBFTNodeTest, RequestStateTransitionsPipeline) {
 // CHECKPOINT TESTS
 // ============================================================================
 
-TEST_F(PBFTNodeTest, MakeCheckpointTrigger) {
+TEST_F(NodeTest, MakeCheckpointTrigger) {
   node_->last_exec_ = 50;
   uint256_t digest = salticidae::get_hash("digest50");
 
@@ -617,7 +617,7 @@ TEST_F(PBFTNodeTest, MakeCheckpointTrigger) {
   EXPECT_TRUE(cp.votes[digest].count(node_->id_));
 }
 
-TEST_F(PBFTNodeTest, CheckpointIgnoredIfOutsideWindow) {
+TEST_F(NodeTest, CheckpointIgnoredIfOutsideWindow) {
   node_->h_ = 100;
   CheckpointMsg m(90, salticidae::get_hash("op"), 1);
   node_->on_checkpoint(std::move(m), dummy_conn);
@@ -626,7 +626,7 @@ TEST_F(PBFTNodeTest, CheckpointIgnoredIfOutsideWindow) {
   EXPECT_FALSE(node_->checkpoints_.count(90));
 }
 
-TEST_F(PBFTNodeTest, CheckpointAddsVote) {
+TEST_F(NodeTest, CheckpointAddsVote) {
   uint64_t seq = 150;
   uint256_t digest = salticidae::get_hash("state150");
 
@@ -639,7 +639,7 @@ TEST_F(PBFTNodeTest, CheckpointAddsVote) {
   EXPECT_FALSE(cp.stable);
 }
 
-TEST_F(PBFTNodeTest, CheckpointTriggersStability) {
+TEST_F(NodeTest, CheckpointTriggersStability) {
   node_->f_ = 1; // n=4, quorum=3
   uint64_t seq = 200;
   uint256_t digest = salticidae::get_hash("stable_state");
@@ -671,7 +671,7 @@ TEST_F(PBFTNodeTest, CheckpointTriggersStability) {
   EXPECT_TRUE(node_->reqlog_.count(250));
 }
 
-TEST_F(PBFTNodeTest, AdvanceWatermarks) {
+TEST_F(NodeTest, AdvanceWatermarks) {
   EXPECT_EQ(node_->h_, 0);
   EXPECT_EQ(node_->H_, L);
 
@@ -680,7 +680,7 @@ TEST_F(PBFTNodeTest, AdvanceWatermarks) {
   EXPECT_EQ(node_->H_, 100 + L);
 }
 
-TEST_F(PBFTNodeTest, GarbageCollectRemovesOldState) {
+TEST_F(NodeTest, GarbageCollectRemovesOldState) {
   node_->h_ = 50;
 
   // Logs to be removed
@@ -714,7 +714,7 @@ TEST_F(PBFTNodeTest, GarbageCollectRemovesOldState) {
 // VIEW CHANGE TESTS
 // ============================================================================
 
-TEST_F(PBFTNodeTest, StartViewChangeUpdatesState) {
+TEST_F(NodeTest, StartViewChangeUpdatesState) {
   node_->view_ = 0;
 
   // Setup a prepared request to be included in P set
@@ -735,7 +735,7 @@ TEST_F(PBFTNodeTest, StartViewChangeUpdatesState) {
   EXPECT_EQ(node_->view_change_timeout_count_, 1);
 }
 
-TEST_F(PBFTNodeTest, ViewChangeIgnoredIfSmallerNextView) {
+TEST_F(NodeTest, ViewChangeIgnoredIfSmallerNextView) {
   // Node 0 is NOT primary for View 5 (5 % 4 = 1)
   node_->view_ = NUM_REPLICAS;
 
@@ -747,7 +747,7 @@ TEST_F(PBFTNodeTest, ViewChangeIgnoredIfSmallerNextView) {
   EXPECT_EQ(node_->view_, NUM_REPLICAS);
 }
 
-TEST_F(PBFTNodeTest, ViewChangeIgnoredIfIsDiffPrimary) {
+TEST_F(NodeTest, ViewChangeIgnoredIfIsDiffPrimary) {
   // Node 0 is NOT primary for View 5 (5 % 4 = 1)
   node_->view_ = 5;
 
@@ -759,7 +759,7 @@ TEST_F(PBFTNodeTest, ViewChangeIgnoredIfIsDiffPrimary) {
   EXPECT_EQ(node_->view_, 5);
 }
 
-TEST_F(PBFTNodeTest, ViewChangeIgnoredIfNotQuorum) {
+TEST_F(NodeTest, ViewChangeIgnoredIfNotQuorum) {
   // We simulate being the primary for View 4 (Our goal)
   node_->id_ = 0;
   node_->view_ = 3;
@@ -792,7 +792,7 @@ TEST_F(PBFTNodeTest, ViewChangeIgnoredIfNotQuorum) {
   EXPECT_NE(node_->view_change_timeout_count_, 0);
 }
 
-TEST_F(PBFTNodeTest, ViewChangeAggregatesAndCreatesNewView) {
+TEST_F(NodeTest, ViewChangeAggregatesAndCreatesNewView) {
   // We simulate being the primary for View 4 (Our goal)
   node_->id_ = 0;
   node_->view_ = 3;
@@ -836,7 +836,7 @@ TEST_F(PBFTNodeTest, ViewChangeAggregatesAndCreatesNewView) {
   EXPECT_EQ(node_->view_change_timeout_count_, 0);
 }
 
-TEST_F(PBFTNodeTest, NewViewIgnoredIfNotFromPrimary) {
+TEST_F(NodeTest, NewViewIgnoredIfNotFromPrimary) {
   node_->view_ = 3;
   uint64_t new_view = 4;
   node_->start_view_change();
@@ -871,7 +871,7 @@ TEST_F(PBFTNodeTest, NewViewIgnoredIfNotFromPrimary) {
   ASSERT_FALSE(node_->reqlog_.count(0));
 }
 
-TEST_F(PBFTNodeTest, NewViewIgnoredIfNotViewChanging) {
+TEST_F(NodeTest, NewViewIgnoredIfNotViewChanging) {
   node_->view_ = 3;
   uint64_t new_view = 4;
   node_->view_changing_ = false;
@@ -906,7 +906,7 @@ TEST_F(PBFTNodeTest, NewViewIgnoredIfNotViewChanging) {
   ASSERT_FALSE(node_->reqlog_.count(0));
 }
 
-TEST_F(PBFTNodeTest, NewViewIgnoredIfSmallerNextView) {
+TEST_F(NodeTest, NewViewIgnoredIfSmallerNextView) {
   node_->view_ = 3;
   uint64_t new_view = 2;
   node_->start_view_change();
@@ -941,7 +941,7 @@ TEST_F(PBFTNodeTest, NewViewIgnoredIfSmallerNextView) {
   ASSERT_FALSE(node_->reqlog_.count(0));
 }
 
-TEST_F(PBFTNodeTest, NewViewIgnoredIfInvalidVSet) {
+TEST_F(NodeTest, NewViewIgnoredIfInvalidVSet) {
   node_->view_ = 3;
   uint64_t new_view = 4;
   node_->start_view_change();
@@ -974,7 +974,7 @@ TEST_F(PBFTNodeTest, NewViewIgnoredIfInvalidVSet) {
   ASSERT_FALSE(node_->reqlog_.count(0));
 }
 
-TEST_F(PBFTNodeTest, NewViewIgnoredIfInvalidOset) {
+TEST_F(NodeTest, NewViewIgnoredIfInvalidOset) {
   node_->view_ = 3;
   node_->start_view_change();
 
@@ -1004,7 +1004,7 @@ TEST_F(PBFTNodeTest, NewViewIgnoredIfInvalidOset) {
   ASSERT_FALSE(node_->reqlog_.count(0));
 }
 
-TEST_F(PBFTNodeTest, NewViewUpdatesStateAndProcessesOset) {
+TEST_F(NodeTest, NewViewUpdatesStateAndProcessesOset) {
   // Setup: Node is stuck in View 3, changing to View 4
   node_->view_ = 3;
   uint64_t new_view = 4;
@@ -1047,7 +1047,7 @@ TEST_F(PBFTNodeTest, NewViewUpdatesStateAndProcessesOset) {
 // ERROR AND EDGE CASE TESTS
 // ============================================================================
 
-TEST_F(PBFTNodeTest, ViewChangeDuringNormalOperation) {
+TEST_F(NodeTest, ViewChangeDuringNormalOperation) {
   // Start normal operation
   RequestMsg req("op1", 1000, 1);
   node_->on_request(std::move(req), salticidae::MsgNetwork<uint8_t>::conn_t{});
@@ -1062,7 +1062,7 @@ TEST_F(PBFTNodeTest, ViewChangeDuringNormalOperation) {
   EXPECT_EQ(node_->reqlog_.size(), 1); // Only original request
 }
 
-TEST_F(PBFTNodeTest, LogOverflowProtection) {
+TEST_F(NodeTest, LogOverflowProtection) {
   node_->H_ = 10; // Small window for testing
 
   // Fill log to capacity
@@ -1086,21 +1086,21 @@ TEST_F(PBFTNodeTest, LogOverflowProtection) {
 // Helpers
 // ============================================================================
 
-TEST_F(PBFTNodeTest, ComesFromPrimary) {
+TEST_F(NodeTest, ComesFromPrimary) {
   node_->conn_to_peer_[dummy_conn.get()] = 0;
   ASSERT_TRUE(node_->comes_from_primary(dummy_conn));
   node_->conn_to_peer_[dummy_conn.get()] = 1;
   ASSERT_FALSE(node_->comes_from_primary(dummy_conn));
 }
 
-TEST_F(PBFTNodeTest, IsWaitingForRequest) {
+TEST_F(NodeTest, IsWaitingForRequest) {
   ASSERT_FALSE(node_->is_waiting_for_request());
   RequestMsg req("op", 1000, 0);
   node_->on_request(std::move(req), dummy_conn);
   ASSERT_TRUE(node_->is_waiting_for_request());
 }
 
-TEST_F(PBFTNodeTest, StartTimerIfNotRunning) {
+TEST_F(NodeTest, StartTimerIfNotRunning) {
   ASSERT_FALSE(node_->timer_running_);
   node_->view_changing_ = true;
   node_->start_timer_if_not_running();
@@ -1109,14 +1109,14 @@ TEST_F(PBFTNodeTest, StartTimerIfNotRunning) {
   node_->start_timer_if_not_running();
   ASSERT_TRUE(node_->timer_running_);
 }
-TEST_F(PBFTNodeTest, StopTimer) {
+TEST_F(NodeTest, StopTimer) {
   node_->start_timer_if_not_running();
   ASSERT_TRUE(node_->timer_running_);
   node_->stop_timer();
   ASSERT_FALSE(node_->timer_running_);
 }
 
-TEST_F(PBFTNodeTest, ManageTimer) {
+TEST_F(NodeTest, ManageTimer) {
   node_->start_timer_if_not_running();
   node_->manage_timer();
   ASSERT_FALSE(node_->timer_running_);
