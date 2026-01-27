@@ -2,11 +2,23 @@
 #include <future>
 
 #include "pbft/client.hh"
+#include "spdlog/sinks/basic_file_sink.h"
 
 using salticidae::_1;
 using salticidae::_2;
 using salticidae::MsgNetwork;
 using salticidae::NetAddr;
+
+#define NETADDR_STR(addr)                                                      \
+  ([&] {                                                                       \
+    char _ipbuf[INET_ADDRSTRLEN];                                              \
+    uint32_t _ip = htonl((addr).ip);                                           \
+    inet_ntop(AF_INET, &_ip, _ipbuf, sizeof(_ipbuf));                          \
+    static thread_local char _outbuf[64];                                      \
+    snprintf(_outbuf, sizeof(_outbuf), "%s:%u", _ipbuf,                        \
+             (unsigned)((addr).port));                                         \
+    return _outbuf;                                                            \
+  }())
 
 namespace pbft {
 
@@ -27,16 +39,32 @@ Client::Client(uint32_t client_id, const ClientConfig &config)
     network_config.enable_tls(false);
   }
   net_ = std::make_unique<MsgNetwork<uint8_t>>(ec_, network_config);
-  // TODO: Add client logger
-  // TODO: Add client metrics
+  
+  std::string metrics_addr = "0.0.0.0:" + std::to_string(9560 + id_);
+  metrics_ = std::make_unique<Metrics>(metrics_addr);
+
+  // Initialize logger
+  logger_ =
+      spdlog::basic_logger_mt(fmt::format("client-{}", id_), // logger name
+                              fmt::format("logs/client-{}.log", id_) // file path
+      );
+
+  logger_->set_level(spdlog::level::info);
+  logger_->set_pattern("[%Y-%m-%dT%H:%M:%S.%e] [%n] [%^%l%$] %v");
 }
 
-Client::~Client() {}
+Client::~Client() {
+  if (logger_) {
+    logger_->flush();
+    spdlog::drop(logger_->name());
+  }
+}
 
 void Client::add_replica(uint32_t id, const NetAddr &addr) {
   if (id == id_)
     return;
   replicas_[id] = net_->connect_sync(addr);
+  logger_->info("CONNECTED REPLICA id={} addr={}", id, NETADDR_STR(addr));
 }
 
 void Client::start(const salticidae::NetAddr &listen_addr) {
@@ -61,6 +89,9 @@ void Client::register_handlers() {
 }
 
 void Client::on_reply(ReplyMsg &&m, const MsgNetwork<uint8_t>::conn_t &) {
+  metrics_->inc_msg("reply");
+  logger_->info("MSG_RECV REPLY view={} ts={} from={} result={}", m.view, m.timestamp, m.replica_id, m.result);
+
   // Only accept replies for this client
   if (m.client_id != id_) {
     return;
@@ -107,6 +138,9 @@ std::future<std::string> Client::invoke_async(const std::string &operation) {
     broadcast(req);
   }
 
+  metrics_->inc_msg("request");
+  logger_->info("REQUEST SENT op={} ts={}", operation, ts);
+
   return fut;
 }
 
@@ -125,6 +159,9 @@ std::string Client::invoke(const std::string &operation) {
     broadcast(req);
   }
 
+  metrics_->inc_msg("request");
+  logger_->info("REQUEST SENT op={} ts={}", operation, ts);
+
   auto current_timeout = std::chrono::milliseconds(timeout_);
 
   for (;;) {
@@ -134,6 +171,8 @@ std::string Client::invoke(const std::string &operation) {
 
     // Timeout, so broadcast to all replicas
     broadcast(req);
+    metrics_->inc_msg("request");
+    logger_->info("REQUEST RETRY op={} ts={}", operation, ts);
     current_timeout *= 2;
   }
 }

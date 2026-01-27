@@ -6,6 +6,8 @@
 
 #include "salticidae/network.h"
 
+#include "spdlog/spdlog.h"
+
 #include <future>
 #include <map>
 #include <memory>
@@ -69,6 +71,11 @@ public:
   // Protocol Handlers
   void register_handlers();
   void on_reply(ReplyMsg &&m, const salticidae::MsgNetwork<uint8_t>::conn_t &);
+
+  // Metrics
+  std::unique_ptr<Metrics> metrics_;
+  // Logger
+  std::shared_ptr<spdlog::logger> logger_;
 
   // Helpers
   inline uint32_t primary_hint() { return current_view_ % n_; }
