@@ -32,6 +32,7 @@ public:
   void add_replica(uint32_t id, const salticidae::NetAddr &addr);
   void start(const salticidae::NetAddr &listen_addr);
   void stop();
+  // Run should be executed on another thread to be able to use invoke
   void run();
 
   std::string invoke(const std::string &operation);
@@ -43,6 +44,9 @@ private:
 public:
 #endif
 
+  // Threading protection
+  std::mutex mu_;
+
   // Config
   uint32_t id_;
   uint32_t n_;
@@ -51,7 +55,7 @@ public:
 
   // Internal state;
   uint32_t current_view_;
-  uint32_t timestamp_;
+  uint64_t timestamp_;
   struct InflightRequest {
     uint64_t timestamp;
     std::promise<std::string> done;

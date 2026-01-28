@@ -27,7 +27,7 @@ TEST_F(ClientTest, InitializationCorrect) {
   EXPECT_EQ(client_->id_, 100);
   EXPECT_EQ(client_->n_, 4);
   EXPECT_EQ(client_->f_, 1);
-  EXPECT_EQ(client_->current_view_, 0);
+  EXPECT_EQ(client_->current_view_, 1);
   EXPECT_EQ(client_->timestamp_, 0);
   EXPECT_TRUE(client_->inflight_requests_.empty());
 }

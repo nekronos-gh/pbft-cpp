@@ -24,7 +24,7 @@ namespace pbft {
 
 Client::Client(uint32_t client_id, const ClientConfig &config)
     : id_(client_id), n_(config.num_replicas),
-      timeout_(config.request_timeout_) {
+      timeout_(config.request_timeout_), current_view_(1) {
 
   f_ = (n_ - 1) / 3;
 
@@ -51,6 +51,8 @@ Client::Client(uint32_t client_id, const ClientConfig &config)
 
   logger_->set_level(spdlog::level::info);
   logger_->set_pattern("[%Y-%m-%dT%H:%M:%S.%e] [%n] [%^%l%$] %v");
+
+  register_handlers();
 }
 
 Client::~Client() {
@@ -104,6 +106,7 @@ void Client::on_reply(ReplyMsg &&m, const MsgNetwork<uint8_t>::conn_t &) {
   }
 
   // Find the pending request by timestamp
+  std::lock_guard<std::mutex> lk(mu_);
   auto it = inflight_requests_.find(m.timestamp);
   if (it == inflight_requests_.end())
     return;
@@ -126,6 +129,7 @@ void Client::on_reply(ReplyMsg &&m, const MsgNetwork<uint8_t>::conn_t &) {
 }
 
 std::future<std::string> Client::invoke_async(const std::string &operation) {
+  std::lock_guard<std::mutex> lk(mu_);
   uint64_t ts = ++timestamp_;
   RequestMsg req(operation, ts, id_);
 
