@@ -89,16 +89,26 @@ std::unique_ptr<pbft::Node> create_node(const std::string &filename,
   auto service = std::make_unique<KeyValueStore>();
   auto node = std::make_unique<pbft::Node>(node_id, cfg, std::move(service));
 
-  // Add Replicas
   salticidae::NetAddr node_addr;
+  if (data.contains("replicas")) {
+    for (auto &[key, val] : data["replicas"].items()) {
+      if (std::stoi(key) == (int)node_id) {
+        node_addr = salticidae::NetAddr(val.get<std::string>());
+        break;
+      }
+    }
+  }
+
+  std::cout << "Node " << node_id << " starting at " << std::string(node_addr)
+            << std::endl;
+  node->start(node_addr);
+
+  // Add Replicas
   if (data.contains("replicas")) {
     for (auto &[key, val] : data["replicas"].items()) {
       uint32_t id = std::stoi(key);
       salticidae::NetAddr addr(val.get<std::string>());
-      if (id == node_id) {
-        // Set apprpriate address
-        node_addr = addr;
-      } else {
+      if (id != node_id) {
         node->add_replica(id, addr);
       }
     }
@@ -112,8 +122,6 @@ std::unique_ptr<pbft::Node> create_node(const std::string &filename,
       node->add_client(id, addr);
     }
   }
-
-  node->start(node_addr);
 
   return node;
 }

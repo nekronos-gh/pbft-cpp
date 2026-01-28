@@ -34,7 +34,6 @@ unit-test: build-debug ## Run unit tests
 integration-test: build-debug ## Run integration tests
 	rm -rf $(BUILD_DIR_DEBUG)/test/logs/
 	- cd $(BUILD_DIR_DEBUG)/test && ./integration_test
-	cd $(BUILD_DIR_DEBUG)/test/logs/ && cat node-*.log | sort > all-nodes.log
 
 .PHONY: test
 test: unit-test integration-test

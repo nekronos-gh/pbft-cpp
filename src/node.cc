@@ -76,6 +76,12 @@ Node::~Node() {
   }
 }
 
+void Node::start(const NetAddr &listen_addr) {
+  net_->start();
+  net_->listen(listen_addr);
+}
+
+// Should always be executed after start
 void Node::add_replica(uint32_t id, const NetAddr &addr) {
   if (id == id_)
     return;
@@ -83,14 +89,10 @@ void Node::add_replica(uint32_t id, const NetAddr &addr) {
   logger_->info("CONNECTED REPLICA id={} addr={}", id, NETADDR_STR(addr));
 }
 
+// Should always be executed after start
 void Node::add_client(uint32_t id, const NetAddr &addr) {
   clients_[id] = net_->connect_sync(addr);
   logger_->info("CONNECTED CLIENT id={} addr={}", id, NETADDR_STR(addr));
-}
-
-void Node::start(const NetAddr &listen_addr) {
-  net_->start();
-  net_->listen(listen_addr);
 }
 
 void Node::stop() {

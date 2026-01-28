@@ -62,16 +62,17 @@ Client::~Client() {
   }
 }
 
+void Client::start(const salticidae::NetAddr &listen_addr) {
+  net_->start();
+  net_->listen(listen_addr);
+}
+
+// Should always be executed after start
 void Client::add_replica(uint32_t id, const NetAddr &addr) {
   if (id == id_)
     return;
   replicas_[id] = net_->connect_sync(addr);
   logger_->info("CONNECTED REPLICA id={} addr={}", id, NETADDR_STR(addr));
-}
-
-void Client::start(const salticidae::NetAddr &listen_addr) {
-  net_->start();
-  net_->listen(listen_addr);
 }
 
 void Client::stop() {

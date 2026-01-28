@@ -6,8 +6,6 @@
 #include "pbft/client.hh"
 #include "pbft/messages.hh"
 
-using ::testing::Return;
-
 namespace pbft {
 namespace testing {
 
