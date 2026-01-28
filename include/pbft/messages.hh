@@ -68,6 +68,11 @@ struct ReplyMsg {
   ReplyMsg(DataStream &&s) {
     s >> view >> timestamp >> client_id >> replica_id >> result;
   }
+
+  void serialize(DataStream &s) const {
+    s << view << timestamp << client_id << replica_id
+      << salticidae::htole((uint32_t)result.size()) << result;
+  }
 };
 
 // Pre-prepare (primary -> replicas).
@@ -141,6 +146,10 @@ struct CommitMsg {
   }
   CommitMsg(DataStream &&s) {
     s >> view >> seq_num >> req_digest >> replica_id;
+  }
+
+  void serialize(DataStream &s) const {
+    s << view << seq_num << req_digest << replica_id;
   }
 };
 
@@ -278,6 +287,16 @@ struct NewViewMsg {
       pre_prepares.emplace_back(std::move(tmp));
     }
   }
+
+  void serialize(DataStream &s) const {
+    s << next_view;
+    s << (uint32_t)view_changes.size();
+    for (const auto &vc : view_changes)
+      s << vc;
+    s << (uint32_t)pre_prepares.size();
+    for (const auto &pp : pre_prepares)
+      s << pp;
+  }
 };
 
 struct HandshakeMsg {
@@ -288,6 +307,31 @@ struct HandshakeMsg {
   HandshakeMsg(uint32_t _id) : id(_id) { serialized << id; }
 
   HandshakeMsg(DataStream &&s) { s >> id; }
+
+  void serialize(DataStream &s) const { s << id; }
 };
+
+// Helper to get message type string from opcode or type
+template <typename M> std::string get_msg_type() {
+  if constexpr (std::is_same_v<M, RequestMsg>)
+    return "request";
+  if constexpr (std::is_same_v<M, ReplyMsg>)
+    return "reply";
+  if constexpr (std::is_same_v<M, PrePrepareMsg>)
+    return "preprepare";
+  if constexpr (std::is_same_v<M, PrepareMsg>)
+    return "prepare";
+  if constexpr (std::is_same_v<M, CommitMsg>)
+    return "commit";
+  if constexpr (std::is_same_v<M, CheckpointMsg>)
+    return "checkpoint";
+  if constexpr (std::is_same_v<M, ViewChangeMsg>)
+    return "viewchange";
+  if constexpr (std::is_same_v<M, NewViewMsg>)
+    return "newview";
+  if constexpr (std::is_same_v<M, HandshakeMsg>)
+    return "handshake";
+  return "unknown";
+}
 
 } // namespace pbft

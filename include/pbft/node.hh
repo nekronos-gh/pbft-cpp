@@ -12,6 +12,7 @@
 #include <optional>
 #include <set>
 #include <unordered_map>
+#include <chrono>
 
 namespace pbft {
 
@@ -79,6 +80,9 @@ public:
     RequestMsg req; // The actual operation
 
     ReqStage stage{ReqStage::NONE};
+
+    std::chrono::steady_clock::time_point t_preprepare_start;
+    std::chrono::steady_clock::time_point t_commit_start;
 
     bool has_preprepare = false;
     std::set<uint32_t> prepares;
@@ -178,6 +182,9 @@ public:
   inline uint32_t primary() const { return view_ % n_; }
 
   template <typename M> inline void broadcast(const M &m) {
+    if (metrics_) {
+      metrics_->inc_msg(get_msg_type<M>(), m.serialized.size(), true);
+    }
     for (const auto &kv : peers_) {
       if (kv.first == id_)
         continue;
@@ -190,6 +197,9 @@ public:
 
   template <typename M>
   inline void send_to_replica(uint32_t replica_id, const M &m) {
+    if (metrics_) {
+      metrics_->inc_msg(get_msg_type<M>(), m.serialized.size(), true);
+    }
     auto it = peers_.find(replica_id);
     if (it == peers_.end())
       return;
@@ -201,6 +211,9 @@ public:
 
   template <typename M>
   inline void send_to_client(uint32_t client_id, const M &m) {
+    if (metrics_) {
+      metrics_->inc_msg(get_msg_type<M>(), m.serialized.size(), true);
+    }
     auto it = clients_.find(client_id);
     if (it == clients_.end())
       return;

@@ -65,7 +65,6 @@ Node::Node(uint32_t replica_id, const NodeConfig &config,
 
   logger_->set_level(spdlog::level::info);
   logger_->set_pattern("[%Y-%m-%dT%H:%M:%S.%e] [%n] [%^%l%$] %v");
-  logger_->info("CHECK n={} f={}", config.num_replicas, f_);
 
   register_handlers();
 }
@@ -141,6 +140,7 @@ void Node::register_handlers() {
 // Stablish which connections belong to who
 void Node::on_handshake(HandshakeMsg &&m,
                         const salticidae::MsgNetwork<uint8_t>::conn_t &conn) {
+  metrics_->inc_msg("handshake", m.serialized.size(), false);
   conn_to_peer_[conn.get()] = m.id;
 }
 
@@ -148,7 +148,7 @@ void Node::on_handshake(HandshakeMsg &&m,
 // REQUEST
 // --------------------------------------------------------------------------
 void Node::on_request(RequestMsg &&m, const MsgNetwork<uint8_t>::conn_t &) {
-  metrics_->inc_msg("request");
+  metrics_->inc_msg("request", m.serialized.size(), false);
   logger_->info("MSG_RECV REQUEST view={} op={} from={} ts={}", view_,
                 m.operation, m.client_id, m.timestamp);
 
@@ -184,12 +184,13 @@ void Node::on_request(RequestMsg &&m, const MsgNetwork<uint8_t>::conn_t &) {
     request.digest = salticidae::get_hash(m);
     request.has_preprepare = true;
     request.stage = ReqStage::PRE_PREPARED;
+    request.t_preprepare_start = std::chrono::steady_clock::now();
 
     // Broadcast preprepare message to replicas
     broadcast(PrePrepareMsg(view_, seq_num_, request.digest, m));
 
     request.prepares.insert(id_);
-    metrics_->set_inflight(reqlog_.size());
+    metrics_->set_inflight(seq_num_ - last_exec_);
   } else {
     // Otherwise, send to primary
     start_timer_if_not_running();
@@ -208,9 +209,12 @@ void Node::on_preprepare(PrePrepareMsg &&m,
 void Node::on_preprepare_impl(PrePrepareMsg &&m,
                               const MsgNetwork<uint8_t>::conn_t &conn,
                               bool from_self) {
-  metrics_->inc_msg("preprepare");
-  logger_->info("MSG_RECV PREPREPARE view={} op={} seq={} hash={}", m.view,
-                m.req.operation, m.seq_num, m.req_digest.to_hex().substr(0, 5));
+  if (!from_self) {
+    metrics_->inc_msg("preprepare", m.serialized.size(), false);
+    logger_->info("MSG_RECV PREPREPARE view={} op={} seq={} hash={}", m.view,
+                  m.req.operation, m.seq_num,
+                  m.req_digest.to_hex().substr(0, 5));
+  }
 
   // Discard message criteria
   if (!from_self && !comes_from_primary(conn))
@@ -242,6 +246,7 @@ void Node::on_preprepare_impl(PrePrepareMsg &&m,
   req_entry.req = m.req;
   req_entry.has_preprepare = true;
   req_entry.stage = ReqStage::PRE_PREPARED;
+  req_entry.t_preprepare_start = std::chrono::steady_clock::now();
 
   // Broadcast prepare to all replicas
   broadcast(PrepareMsg(view_, m.seq_num, m.req_digest, id_));
@@ -256,7 +261,7 @@ void Node::on_preprepare_impl(PrePrepareMsg &&m,
 // PREPARE
 // --------------------------------------------------------------------------
 void Node::on_prepare(PrepareMsg &&m, const MsgNetwork<uint8_t>::conn_t &conn) {
-  metrics_->inc_msg("prepare");
+  metrics_->inc_msg("prepare", m.serialized.size(), false);
   logger_->info("MSG_RECV PREPARE view={} seq={} from={} hash={}", m.view,
                 m.seq_num, m.replica_id, m.req_digest.to_hex().substr(0, 5));
 
@@ -292,7 +297,14 @@ void Node::try_prepare(ReqLogEntry &req_entry) {
                   req_entry.view, req_entry.req.operation, req_entry.seq,
                   req_entry.digest.to_hex().substr(0, 5));
 
+    auto duration =
+        std::chrono::duration_cast<std::chrono::duration<double>>(
+            std::chrono::steady_clock::now() - req_entry.t_preprepare_start)
+            .count();
+    metrics_->observe_phase("prepared", duration);
+
     req_entry.stage = ReqStage::PREPARED;
+    req_entry.t_commit_start = std::chrono::steady_clock::now();
 
     // Broadcast Commit
     broadcast(CommitMsg(view_, req_entry.seq, req_entry.digest, id_));
@@ -306,7 +318,7 @@ void Node::try_prepare(ReqLogEntry &req_entry) {
 // COMMIT
 // --------------------------------------------------------------------------
 void Node::on_commit(CommitMsg &&m, const MsgNetwork<uint8_t>::conn_t &) {
-  metrics_->inc_msg("commit");
+  metrics_->inc_msg("commit", m.serialized.size(), false);
   logger_->info("MSG_RECV COMMIT view={} seq={} from={} hash={}", m.view,
                 m.seq_num, m.replica_id, m.req_digest.to_hex().substr(0, 5));
 
@@ -334,6 +346,13 @@ void Node::try_commit(ReqLogEntry &req_entry) {
     logger_->info("LOCALLY COMMITTED view={} op={} seq={} hash={}",
                   req_entry.view, req_entry.req.operation, req_entry.seq,
                   req_entry.digest.to_hex().substr(0, 5));
+
+    auto duration =
+        std::chrono::duration_cast<std::chrono::duration<double>>(
+            std::chrono::steady_clock::now() - req_entry.t_commit_start)
+            .count();
+    metrics_->observe_phase("commit", duration);
+
     req_entry.stage = ReqStage::COMMITTED;
     try_execute();
   }
@@ -350,7 +369,6 @@ void Node::try_execute() {
     // Never execute unless all lower sequence numbers are executed
     if (req_entry.stage != ReqStage::COMMITTED)
       break; // Ignore uncommited transactions and skip
-    metrics_->set_inflight(reqlog_.size());
 
     // Execute operation
     auto result = service_->execute(req_entry.req.operation);
@@ -359,7 +377,6 @@ void Node::try_execute() {
     auto reply = ReplyMsg(view_, req_entry.req.timestamp,
                           req_entry.req.client_id, id_, result);
     send_to_client(req_entry.req.client_id, reply);
-    metrics_->inc_msg("reply");
     ClientReplyInfo cache_reply;
 
     cache_reply.replica_id = reply.replica_id;
@@ -393,6 +410,7 @@ void Node::make_checkpoint() {
 
 void Node::on_checkpoint(CheckpointMsg &&m,
                          const MsgNetwork<uint8_t>::conn_t &) {
+  metrics_->inc_msg("checkpoint", m.serialized.size(), false);
   logger_->info("MSG_RECV CHECKPOINT view={} seq={} from={} state={}", view_,
                 m.seq_num, m.replica_id, m.state_digest.to_hex().substr(0, 5));
   if (m.seq_num < h_)
@@ -442,6 +460,7 @@ void Node::garbage_collect() {
 // --------------------------------------------------------------------------
 void Node::start_view_change() {
   view_changing_ = true;
+  metrics_->inc_view_change("timeout");
   uint64_t next_view = view_ + 1;
   view_change_timeout_count_++;
 
@@ -478,6 +497,7 @@ void Node::start_view_change() {
 
 void Node::on_viewchange(ViewChangeMsg &&m,
                          const MsgNetwork<uint8_t>::conn_t &) {
+  metrics_->inc_msg("viewchange", m.serialized.size(), false);
   logger_->info("MSG_RECV VIEW_CHANGE view={} new_view={} checkpoint={} C={} "
                 "P={} from={}",
                 view_, m.next_view, m.last_stable_checkpoint,
@@ -545,6 +565,7 @@ void Node::on_viewchange(ViewChangeMsg &&m,
 
     view_changing_ = false;
     view_ = m.next_view;
+    metrics_->set_view(view_);
     view_change_timeout_count_ = 0;
 
     // Stop timer and restart if we have pending requests
@@ -553,8 +574,10 @@ void Node::on_viewchange(ViewChangeMsg &&m,
 }
 
 void Node::on_newview(NewViewMsg &&m, const MsgNetwork<uint8_t>::conn_t &conn) {
+  metrics_->inc_msg("newview", m.serialized.size(), false);
   logger_->info("MSG_RECV NEW_VIEW view={} new_view={} V={} O={}", view_,
                 m.next_view, m.view_changes.size(), m.pre_prepares.size());
+
   // Only accept messages from primary for new view
   if (!comes_from_primary(conn, m.next_view))
     return;
@@ -584,6 +607,7 @@ void Node::on_newview(NewViewMsg &&m, const MsgNetwork<uint8_t>::conn_t &conn) {
   // Update View
   view_changing_ = false;
   view_ = m.next_view;
+  metrics_->set_view(view_);
   view_change_timeout_count_ = 0;
 
   // Process PrePrepares in O set

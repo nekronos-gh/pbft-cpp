@@ -2,14 +2,12 @@
 
 #include "pbft/messages.hh"
 #include "pbft/metrics.hh"
-#include "pbft/service_interface.hh"
 
 #include "salticidae/network.h"
 
 #include "spdlog/spdlog.h"
 
 #include <future>
-#include <map>
 #include <memory>
 #include <optional>
 
@@ -79,11 +77,12 @@ public:
 
   // Helpers
   inline uint32_t primary_hint() { return current_view_ % n_; }
-  inline void broadcast(const RequestMsg &m) {
+  inline void broadcast_request(const RequestMsg &m) {
     for (const auto &kv : replicas_) {
       auto &conn = kv.second;
       if (conn && !conn->is_terminated()) {
         net_->send_msg(m, conn);
+        metrics_->inc_msg("request", m.serialized.size(), true);
       }
     }
   }
