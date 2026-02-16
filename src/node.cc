@@ -151,8 +151,8 @@ void Node::on_handshake(HandshakeMsg &&m,
 // --------------------------------------------------------------------------
 void Node::on_request(RequestMsg &&m, const MsgNetwork<uint8_t>::conn_t &) {
   metrics_->inc_msg("request", m.serialized.size(), false);
-  logger_->info("MSG_RECV REQUEST view={} op={} from={} ts={}", view_,
-                m.operation, m.client_id, m.timestamp);
+  logger_->info("MSG_RECV REQUEST op={} from={} ts={}", m.operation,
+                m.client_id, m.timestamp);
 
   // Check for duplicate request by (client_id, timestamp)
   auto last_reply_it = last_replies_.find(m.client_id);
@@ -173,6 +173,16 @@ void Node::on_request(RequestMsg &&m, const MsgNetwork<uint8_t>::conn_t &) {
     // Verify sequence within watermarks
     if (seq_num_ < h_ || seq_num_ >= H_)
       return;
+
+    // Check if request is already in progress
+    for (const auto &entry : reqlog_) {
+      if (entry.second.has_preprepare &&
+          entry.second.req.client_id == m.client_id &&
+          entry.second.req.timestamp == m.timestamp) {
+        return;
+      }
+    }
+
     seq_num_++;
 
     logger_->info("REQUEST ACCEPTED view={} op={} seq={}", view_, m.operation,
@@ -213,8 +223,8 @@ void Node::on_preprepare_impl(PrePrepareMsg &&m,
                               bool from_self) {
   if (!from_self) {
     metrics_->inc_msg("preprepare", m.serialized.size(), false);
-    logger_->info("MSG_RECV PREPREPARE view={} op={} seq={} hash={}", m.view,
-                  m.req.operation, m.seq_num,
+    logger_->info("MSG_RECV PREPREPARE view={} op={} seq={} hash={}", view_,
+                  m.view, m.req.operation, m.seq_num,
                   m.req_digest.to_hex().substr(0, 5));
   }
 
@@ -428,6 +438,8 @@ void Node::on_checkpoint(CheckpointMsg &&m,
     cp_data.stable = true;
     last_stable_digest_ = m.state_digest;
     advance_watermarks(m.seq_num);
+    // Update the sequence number accordingly
+    seq_num_ = recompute_highest_sequence();
     garbage_collect();
   }
 }
@@ -436,6 +448,14 @@ void Node::advance_watermarks(uint64_t stable_seq) {
   h_ = stable_seq;
   H_ = h_ + L_;
   metrics_->set_watermarks(h_, H_);
+}
+
+uint64_t Node::recompute_highest_sequence() const {
+  uint64_t highest = std::max(last_exec_, h_);
+  if (!reqlog_.empty()) {
+    highest = std::max(highest, reqlog_.rbegin()->first);
+  }
+  return highest;
 }
 
 void Node::garbage_collect() {
@@ -569,6 +589,8 @@ void Node::on_viewchange(ViewChangeMsg &&m,
     view_ = m.next_view;
     metrics_->set_view(view_);
     view_change_timeout_count_ = 0;
+    // Update the sequence number accordingly
+    seq_num_ = recompute_highest_sequence();
 
     // Stop timer and restart if we have pending requests
     manage_timer();
@@ -617,6 +639,9 @@ void Node::on_newview(NewViewMsg &&m, const MsgNetwork<uint8_t>::conn_t &conn) {
     on_preprepare_impl(std::move(pp), std::move(conn), true);
   }
 
+  // Update the sequence number accordingly
+  seq_num_ = recompute_highest_sequence();
+
   // Stop if no pending requests
   manage_timer();
 }
@@ -660,4 +685,5 @@ void Node::manage_timer() {
     }
   }
 }
+
 } // namespace pbft

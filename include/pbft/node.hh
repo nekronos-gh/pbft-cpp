@@ -8,11 +8,12 @@
 
 #include "spdlog/spdlog.h"
 
+#include <chrono>
+#include <map>
 #include <memory>
 #include <optional>
 #include <set>
 #include <unordered_map>
-#include <chrono>
 
 namespace pbft {
 
@@ -88,7 +89,7 @@ public:
     std::set<uint32_t> prepares;
     std::set<uint32_t> commits;
   };
-  std::unordered_map<uint64_t, ReqLogEntry> reqlog_;
+  std::map<uint64_t, ReqLogEntry> reqlog_;
 
   // Client management
   struct ClientReplyInfo {
@@ -147,6 +148,7 @@ public:
 
   void make_checkpoint();
   void advance_watermarks(uint64_t stable_seq);
+  uint64_t recompute_highest_sequence() const;
   void garbage_collect();
 
   // Timer management
@@ -158,6 +160,7 @@ public:
 
   // Helpers
   inline bool is_primary() const { return id_ == (view_ % n_); }
+
   // Primary in current view
   inline bool comes_from_primary(
       const salticidae::MsgNetwork<uint8_t>::conn_t &conn) const {

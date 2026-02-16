@@ -1,3 +1,5 @@
+#include <csignal>
+#include <cstdlib>
 #include <iostream>
 #include <memory>
 #include <thread>
@@ -14,14 +16,14 @@ using namespace salticidae;
 
 #define ASSERT_TRUE(cond)                                                      \
   if (!(cond)) {                                                               \
-    std::cerr << "   [FAIL] " << #cond << " at line " << __LINE__              \
+    std::cerr << "\n [FAIL] " << #cond << " at line " << __LINE__              \
               << std::endl;                                                    \
     return false;                                                              \
   }
 
 #define ASSERT_EQ(val1, val2)                                                  \
   if ((val1) != (val2)) {                                                      \
-    std::cerr << "   [FAIL] " << #val1 << " (" << (val1) << ") != " << #val2   \
+    std::cerr << "\n [FAIL] " << #val1 << " (" << (val1) << ") != " << #val2   \
               << " (" << (val2) << ") at line " << __LINE__ << std::endl;      \
     return false;                                                              \
   }
@@ -87,6 +89,10 @@ private:
 // ============================================================================
 // Cluster Setup
 // ============================================================================
+
+class TestCluster;
+TestCluster *g_cluster = nullptr;
+
 // Cluster for local execution of many replicas
 class TestCluster {
 public:
@@ -162,9 +168,17 @@ private:
 
 public:
   TestCluster(uint32_t n) : n_(n), f_((n - 1) / 3), client_id_(0) {
-    node_config_ = {n, 200, 100, 2.0, std::nullopt};
+    g_cluster = this;
+    node_config_ = {n, 200, 100, 2, std::nullopt};
     client_config_ = {n, 2000, std::nullopt};
     client_addr_ = NetAddr("127.0.0.1:11000");
+  }
+
+  ~TestCluster() {
+    stop();
+    if (g_cluster == this) {
+      g_cluster = nullptr;
+    }
   }
 
   void start() {
@@ -183,9 +197,10 @@ public:
     }
     if (client_thread_.joinable())
       client_thread_.join();
+    client_.reset();
 
     for (auto &rep : replicas) {
-      if (!rep.crashed) {
+      if (!rep.crashed && rep.node) {
         rep.node->stop();
         if (rep.thread.joinable())
           rep.thread.join();
@@ -244,6 +259,13 @@ public:
     return (correct > 2 * f_);
   }
 };
+
+void signal_handler(int signal) {
+  if (g_cluster) {
+    g_cluster->stop();
+  }
+  std::exit(signal);
+}
 
 // ============================================================================
 // Tests
@@ -336,6 +358,24 @@ bool test_view_change() {
   return true;
 }
 
+bool test_multiple_view_changes() {
+  TestCluster cluster(7);
+  cluster.start();
+
+  cluster.crash_replica(0); // Primary of view 0
+  ASSERT_EQ(cluster.send_request("SET:10"), "OK");
+  ASSERT_EQ(cluster.verify_state(10), true);
+  ASSERT_EQ(cluster.current_view(), 1);
+
+  cluster.crash_replica(1); // Primary of view 1
+  ASSERT_EQ(cluster.send_request("SET:20"), "OK");
+  ASSERT_EQ(cluster.current_view(), 2);
+
+  ASSERT_EQ(cluster.verify_state(20), true);
+  cluster.stop();
+  return true;
+}
+
 bool test_checkpoint() {
   TestCluster cluster(4);
   uint32_t K = 10;
@@ -375,6 +415,7 @@ bool test_checkpoint() {
 // ============================================================================
 
 int main() {
+  std::signal(SIGINT, signal_handler);
   std::cout << " === Running PBFT Integration Tests === " << std::endl;
 
   std::vector<std::pair<std::string, bool (*)()>> tests = {
@@ -383,6 +424,7 @@ int main() {
       {"No Consensus", test_no_consensus},
       {"Byzantine Execution", test_byzantine},
       {"Force View Change", test_view_change},
+      {"Force Multiple View Changes", test_multiple_view_changes},
       {"Checkpointing and Garbage Collection", test_checkpoint},
   };
 
