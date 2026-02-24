@@ -6,35 +6,55 @@ project(PBFT LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_FLAGS_DEBUG "-g -O0 -fno-inline" CACHE STRING "" FORCE)
+
+option(PBFT_BUILD_EXAMPLES "Build PBFT examples" OFF)
+option(PBFT_BUILD_TESTS "Build PBFT tests" OFF)
+
+add_compile_options(
+    -Wall
+    -Wextra
+    -Wpedantic
+)
 
 # Dependencies
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(GNUInstallDirs)
 find_package(prometheus-cpp CONFIG REQUIRED)
 find_package(Salticidae REQUIRED)
+find_package(OpenSSL REQUIRED)
+find_package(PkgConfig REQUIRED)
+find_package(spdlog REQUIRED)
+pkg_check_modules(LIBUV REQUIRED libuv)
 
 # Select sources
 add_library(pbft_core STATIC
   src/node.cc
   src/metrics.cc
+  src/client.cc
 )
+add_library(pbft::core ALIAS pbft_core)
 
 # Public headers
 target_include_directories(pbft_core
   PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>
-  PRIVATE
     ${SALTICIDAE_INCLUDE_DIRS}
 )
 
 # Link dependencies
 target_link_libraries(pbft_core
-  PRIVATE
-    ${SALTICIDAE_LIBRARIES}
   PUBLIC
     prometheus-cpp::core # For downstream use
     prometheus-cpp::pull
+    spdlog::spdlog
+    fmt::fmt
+  PRIVATE
+    OpenSSL::SSL
+    OpenSSL::Crypto
+    ${SALTICIDAE_LIBRARIES}
+    ${LIBUV_LIBRARIES}
 )
 
 # Install and export
@@ -53,3 +73,12 @@ install(EXPORT pbftTargets
   NAMESPACE pbft::
   DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/pbft
 )
+
+# Include subdirectory with tests and examples
+if(PBFT_BUILD_TESTS)
+  add_subdirectory(test)
+endif()
+if (PBFT_BUILD_EXAMPLES)
+  add_subdirectory(examples)
+endif()
+

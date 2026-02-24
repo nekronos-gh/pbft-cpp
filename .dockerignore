@@ -1,0 +1,9 @@
+# Root .dockerignore
+.git
+build/
+.cache
+*.o
+*.a
+*.so
+logs/
+
