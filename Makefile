@@ -28,12 +28,12 @@ build-debug: configure-debug ## Build Debug version
 
 .PHONY: unit-test
 unit-test: build-debug ## Run unit tests
-	cd $(BUILD_DIR_DEBUG)/test && ctest --output-on-failure
+	cd $(BUILD_DIR_DEBUG)/test/unit && ctest --output-on-failure
 
 .PHONY: integration-test
 integration-test: build-debug ## Run integration tests
 	rm -rf $(BUILD_DIR_DEBUG)/test/logs/
-	- cd $(BUILD_DIR_DEBUG)/test && ./integration_test
+	- cd $(BUILD_DIR_DEBUG)/test/integration && ./integration_test
 
 .PHONY: test
 test: unit-test integration-test

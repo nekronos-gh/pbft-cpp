@@ -69,13 +69,6 @@ Node::Node(uint32_t replica_id, const NodeConfig &config,
   register_handlers();
 }
 
-Node::~Node() {
-  if (logger_) {
-    logger_->flush();
-    spdlog::drop(logger_->name());
-  }
-}
-
 void Node::start(const NetAddr &listen_addr) {
   net_->start();
   net_->listen(listen_addr);
@@ -105,6 +98,11 @@ void Node::stop() {
       net_->terminate(kv.second);
     }
     net_->stop();
+  }
+  if (logger_) {
+    logger_->flush();
+    spdlog::drop(logger_->name()); // Safe here: called from main()
+    logger_.reset();
   }
 }
 

@@ -35,7 +35,6 @@ class Node {
 public:
   Node(uint32_t replica_id, const NodeConfig &config,
        std::unique_ptr<ServiceInterface> service);
-  ~Node();
 
   void add_replica(uint32_t id, const salticidae::NetAddr &addr);
   void add_client(uint32_t id, const salticidae::NetAddr &addr);
@@ -44,7 +43,7 @@ public:
   void run();
 
 #ifndef PBFT_TESTING_ACCESS
-private:
+protected:
 #else
 public:
 #endif
