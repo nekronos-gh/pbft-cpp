@@ -5,7 +5,6 @@ This repository contains a robust implementation of the **Practical Byzantine Fa
 ## Table of Contents
 
 - [Overview](#overview)
-- [Architecture](#architecture)
 - [Prerequisites](#prerequisites)
 - [Building the Project](#building-the-project)
 - [Running the Key-Value Store Example](#running-the-key-value-store-example)
@@ -21,27 +20,6 @@ The goal of this project is to provide a clear, understandable, and functional i
 -   **State Transfer**: (Planned/Partial) Bringing lagging replicas up to date.
 
 The implementation decouples the consensus logic (`pbft::Node`) from the application logic (`pbft::ServiceInterface`), enabling you to replicate any deterministic service (e.g., Key-Value Store, Blockchain, Distributed Ledger).
-
-
-## 🏗️ Architecture
-
-```mermaid
-graph TD
-    Client[Client Application] -->|Requests| Node
-    subgraph "PBFT Replica Node"
-        Node[Node Controller]
-        Net[Network Layer (Salticidae)]
-        Engine[PBFT Protocol Engine]
-        Service[Service Interface]
-        Impl[Concrete Service Implementation]
-        
-        Node --> Net
-        Node --> Engine
-        Node --> Service
-        Engine -->|Consensus| Service
-        Service -->|Execute| Impl
-    end
-```
 
 ## Prerequisites
 
