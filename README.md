@@ -60,7 +60,7 @@ make build-release
 make clean
 ```
 
-## 🚀 Running the Key-Value Store Example
+## Running the Key-Value Store Example
 
 The repository includes a `kv_store` example to demonstrate the usage.
 
